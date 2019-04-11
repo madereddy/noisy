@@ -1,10 +1,10 @@
 version: 2
 jobs:
-  Python_3.7:
+  Python:
     docker:
       # specify the version you desire here
       # use `-browsers` prefix for selenium tests, e.g. `3.6.1-browsers`
-      - image: circleci/python:2.7
+      - image: circleci/python:latest
 
     working_directory: ~/repo
 
@@ -44,22 +44,8 @@ jobs:
           path: test-reports
           destination: test-reports
 
-  Python_3.6:
-    docker:
-      - image: circleci/python:3.6
-    working_directory: ~/repo
-    steps: *steps
-
-  Python_3.7:
-    docker:
-      - image: circleci/python:3.7-rc-node
-    working_directory: ~/repo
-    steps: *steps
-
 workflows:
   version: 2
   build:
     jobs:
-      - Python_2.7
-      - Python_3.6
-      - Python_3.7
+      - Python
