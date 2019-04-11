@@ -22,7 +22,7 @@ pip install requests
 
 Clone the repository
 ```
-git clone https://github.com/1tayH/noisy.git
+git clone https://github.com/madereddy/noisy.git
 ```
 
 Navigate into the `noisy` directory
