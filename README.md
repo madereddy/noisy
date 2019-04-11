@@ -97,6 +97,7 @@ Some edge-cases examples are available on the `examples` folder. You can read mo
 ## Authors
 
 * **Itay Hury** - *Initial work* - [1tayH](https://github.com/1tayH)
+* **Made Reddy**- *Docker build + Python Upgrade* 
 
 See also the list of [contributors](https://github.com/1tayH/Noisy/contributors) who participated in this project.
 
@@ -107,5 +108,4 @@ This project is licensed under the GNU GPLv3 License - see the [LICENSE.md](LICE
 ## Acknowledgments
 
 This project has been inspired by
-* [RandomNoise](http://www.randomnoise.us)
-* [web-traffic-generator](https://github.com/ecapuano/web-traffic-generator)
+[https://github.com/1tayH/noisy]
