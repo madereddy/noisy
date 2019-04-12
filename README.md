@@ -98,8 +98,6 @@ Some edge-cases examples are available on the `examples` folder. You can read mo
 * **Itay Hury** - *Initial work* - [1tayH](https://github.com/1tayH)
 * **Made Reddy**- *Docker build + Python Upgrade* 
 
-See also the list of [contributors](https://github.com/1tayH/Noisy/contributors) who participated in this project.
-
 ## License
 
 This project is licensed under the GNU GPLv3 License - see the [LICENSE.md](LICENSE.md) file for details
