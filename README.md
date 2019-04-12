@@ -4,8 +4,6 @@
 
 A simple python script that generates random HTTP/DNS traffic noise in the background while you go about your regular web browsing, to make your web traffic data less valuable for selling and for extra obscurity.
 
-Tested on MacOS High Sierra, Ubuntu 16.04 and Raspbian Stretch and is compatable with both Python 2.7 and 3.6
-
 ## Getting Started
 
 These instructions will get you a copy of the project up and running on your local machine
@@ -76,20 +74,22 @@ DEBUG:urllib3.connectionpool:https://www.reddit.com:443 "GET /user/Saditon HTTP/
 ...
 ```
 
-## Build Using Docker
+## Use Docker
 
-1. Build the image
+1. Pull the container and run it:
 
-`docker build -t noisy .`
+`docker run -it madereddy/noisy --config config.json`
 
-**Or** if you'd like to build it for a **Raspberry Pi** (running Raspbian stretch):
+OR use a compose file inside a docker-compose.yml or portainer stack
 
-`docker build -f Dockerfile.pi -t noisy .`
-
-2. Create the container and run:
-
-`docker run -it noisy --config config.json`
-
+````````````
+version: "2"
+services:
+  noisy:
+    image: madereddy/noisy:latest
+    container_name: noisy
+    restart: always
+````````````
 ## Some examples
 
 Some edge-cases examples are available on the `examples` folder. You can read more there [examples/README.md](examples/README.md).
