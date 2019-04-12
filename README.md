@@ -80,7 +80,7 @@ DEBUG:urllib3.connectionpool:https://www.reddit.com:443 "GET /user/Saditon HTTP/
 
 `docker run -it madereddy/noisy --config config.json`
 
-OR use a compose file inside a docker-compose.yml or portainer stack
+2. Use a compose file inside a docker-compose.yml or portainer stack
 
 ````````````
 version: "2"
