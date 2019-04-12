@@ -1,4 +1,3 @@
-
 # Noisy
 [![CircleCI](https://circleci.com/gh/1tayH/noisy/tree/master.svg?style=shield)](https://circleci.com/gh/1tayH/noisy/tree/master)
 
