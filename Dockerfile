@@ -1,4 +1,4 @@
-FROM python:latest
+FROM python:latest-alpine
 WORKDIR /
 COPY requirements.txt .
 RUN pip install -r requirements.txt
