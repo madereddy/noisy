@@ -96,7 +96,7 @@ Some edge-cases examples are available on the `examples` folder. You can read mo
 ## Authors
 
 * **Itay Hury** - *Initial work* - [1tayH](https://github.com/1tayH)
-* **Made Reddy**- *Docker build + Python Upgrade* 
+* **madereddy**- *Docker build + Python Upgrade* 
 
 ## License
 
