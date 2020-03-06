@@ -1,6 +1,6 @@
 {
     "max_depth": 5,
-    "min_sleep": 20,
+    "min_sleep": 10,
     "max_sleep": 60,
     "timeout": false,
     "root_urls": [
