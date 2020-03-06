@@ -44,7 +44,6 @@ class Crawler(object):
         :param url: the url to visit
         :return: the response Requests object
         """
-        
         random_user_agent = random.choice(self._config["user_agents"])
         headers = {'user-agent': random_user_agent}
 
