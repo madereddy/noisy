@@ -1,7 +1,7 @@
 {
     "max_depth": 5,
-    "min_sleep": 30,
-    "max_sleep": 60,
+    "min_sleep": 5,
+    "max_sleep": 10,
     "timeout": false,
     "root_urls": [
         "https://www.facebook.com",
