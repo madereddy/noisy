@@ -1,1 +1,2 @@
-requests>=2.22.0
+requests
+shadow-useragent
