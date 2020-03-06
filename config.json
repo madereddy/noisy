@@ -169,7 +169,7 @@
         "https://www.wordpress.org",
         "https://www.wp.me",
         "https://www.yahoo.com",
-        "https://www.youtube.com",
+        "https://www.youtube.com"
     ],
     "blacklisted_urls": [
         "https://t.co",
