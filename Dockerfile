@@ -1,4 +1,4 @@
-FROM python:rc-alpine3.10
+FROM python:alpine
 WORKDIR /
 COPY requirements.txt .
 RUN pip install -r requirements.txt
