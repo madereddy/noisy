@@ -7,7 +7,6 @@ import re
 import sys
 import time
 import shadow_useragent
-ua = shadow_useragent.ShadowUserAgent()
 import requests
 from urllib3.exceptions import LocationParseError
 
@@ -31,6 +30,7 @@ class Crawler(object):
         self._config = {}
         self._links = []
         self._start_time = None
+        self.ua = shadow_useragent.ShadowUserAgent()
 
     class CrawlerTimedOut(Exception):
         """
@@ -44,7 +44,11 @@ class Crawler(object):
         :param url: the url to visit
         :return: the response Requests object
         """
-        random_user_agent = random.choice(self._config["user_agents"])
+        
+        self.ua.force_update()
+        random_user_agent = self.ua.random
+        print('\nINFO: Please ignore shadow-useragent errors and warnings if no other errors')
+        print(f'INFO: Agent for this run "{random_user_agent}"')
         headers = {'user-agent': random_user_agent}
 
         response = requests.get(url, headers=headers, timeout=5)
