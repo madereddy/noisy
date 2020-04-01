@@ -1,5 +1,8 @@
-# Noisy
-[![CircleCI](https://circleci.com/gh/1tayH/noisy/tree/master.svg?style=shield)](https://circleci.com/gh/1tayH/noisy/tree/master)
+# Noisy 
+[![CircleCI](https://circleci.com/gh/1tayH/noisy/tree/master.svg?style=shield)](https://circleci.com/gh/madereddy/noisy/tree/master)
+![Docker Pulls][pulls]
+
+[pulls]: https://img.shields.io/docker/pulls/madereddy/noisy
 
 A simple python script that generates random HTTP/DNS traffic noise in the background while you go about your regular web browsing, to make your web traffic data less valuable for selling and for extra obscurity.
 
