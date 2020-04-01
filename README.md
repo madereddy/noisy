@@ -1,5 +1,5 @@
 # Noisy 
-[![CircleCI](https://circleci.com/gh/1tayH/noisy/tree/master.svg?style=shield)](https://circleci.com/gh/madereddy/noisy/tree/master)
+[![CircleCI](https://circleci.com/gh/madereddy/noisy/tree/master.svg?style=shield)](https://circleci.com/gh/madereddy/noisy/tree/master)
 ![Docker Pulls][pulls]
 
 [pulls]: https://img.shields.io/docker/pulls/madereddy/noisy
