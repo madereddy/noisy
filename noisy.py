@@ -47,7 +47,7 @@ class Crawler(object):
         
         self.ua.force_update()
         random_user_agent = self.ua.random
-        #print('\nINFO: Please ignore shadow-useragent errors and warnings if no other errors')
+        print('\nINFO: Please ignore shadow-useragent errors and warnings if no other errors')
         print(f'INFO: Agent for this run "{random_user_agent}"')
         headers = {'user-agent': random_user_agent}
 
