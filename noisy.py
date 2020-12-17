@@ -6,14 +6,16 @@ import random
 import re
 import sys
 import time
+import fake_useragent
 """ 
 Shadow UserAgent update is broken (2020-11-20). Using fake_useragent in its place. 
 
 # import shadow_useragent
 """
-from fake_useragent import UserAgent
+
 
 import requests
+from fake_useragent import UserAgent
 from urllib3.exceptions import LocationParseError
 
 try:                 # Python 2
