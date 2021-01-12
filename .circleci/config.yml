@@ -1,8 +1,8 @@
 version: 2
 jobs:
-  Python_3.6:
+  Python_3.9:
     docker:
-      - image: circleci/python:3.6
+      - image: circleci/python:3.9
     working_directory: ~/repo
 
     steps: &steps
@@ -43,4 +43,4 @@ workflows:
   version: 2
   build:
     jobs:
-      - Python_3.6
+      - Python_3.9
