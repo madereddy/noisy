@@ -6,7 +6,7 @@
 	import re	
 	import sys	
 	import time	
-		
+	import fake_useragent
 	""" 	
 	Shadow UserAgent update is broken (2020-11-20). Using fake_useragent in its place. 	
 		
