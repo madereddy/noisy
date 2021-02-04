@@ -1,7 +1,7 @@
 {
-  "max_depth": 10,
-  "min_sleep": 2,
-  "max_sleep": 5,
+  "max_depth": 15,
+  "min_sleep": 5,
+  "max_sleep": 30,
   "timeout": false,
   "root_urls": [
     "https://www.facebook.com",
@@ -23,7 +23,6 @@
     "https://www.bbc.co.uk",
     "https://www.bbc.com",
     "https://www.behance.net",
-    "https://www.bit.ly",
     "https://www.blog.priceonomics.com",
     "https://www.blogger.com",
     "https://www.blogs.smithsonianmag.com",
