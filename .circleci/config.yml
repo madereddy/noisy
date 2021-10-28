@@ -1,6 +1,12 @@
 version: 2
+executors:
+  docker-publisher:
+    environment:
+      IMAGE_NAME: madereddy/noisy
+    docker:
+      - image: circleci/python3.9
 jobs:
-  Python_3.9:
+    Python_3.9:
     docker:
       - image: circleci/python:3.9
     working_directory: ~/repo
@@ -38,9 +44,26 @@ jobs:
       - store_artifacts:
           path: test-reports
           destination: test-reports
-
+  publish-latest:
+    executor: docker-publisher
+    steps:
+      - attach_workspace:
+          at: /tmp/workspace
+      - setup_remote_docker
+      - run:
+          name: Load archived Docker image
+          command: docker load -i /tmp/workspace/image.tar
+      - run:
+          name: Publish Docker Image to Docker Hub
+          command: |
+            echo "$docker-password" | docker login -u "$docker-username" --password-stdin
+            docker push $image:latest
 workflows:
   version: 2
   build:
     jobs:
       - Python_3.9
+      - publish-latest:
+            docker-username: Login 
+            docker-password: AccessToken 
+            image: Noisy 
