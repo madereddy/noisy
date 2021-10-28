@@ -6,14 +6,8 @@ import random
 import re
 import sys
 import time
-import requests
-import fake_useragent
-""" 
-Shadow UserAgent update is broken (2020-11-20). Using fake_useragent in its place. 
 
-# import shadow_useragent
-"""
-from fake_useragent import UserAgent
+import requests
 from urllib3.exceptions import LocationParseError
 
 try:                 # Python 2
@@ -36,8 +30,6 @@ class Crawler(object):
         self._config = {}
         self._links = []
         self._start_time = None
-        # self.ua = shadow_useragent.ShadowUserAgent() ## shadow_useragent 
-        self.ua = UserAgent()
 
     class CrawlerTimedOut(Exception):
         """
@@ -51,12 +43,7 @@ class Crawler(object):
         :param url: the url to visit
         :return: the response Requests object
         """
-        
-        # self.ua.force_update() ## shadow_useragent 
-        self.ua.update() ## fake_useragent
-        random_user_agent = self.ua.random
-        #print('\nINFO: Please ignore shadow-useragent errors and warnings if no other errors')
-        print(f'INFO: Agent for this run "{random_user_agent}"')
+        random_user_agent = random.choice(self._config["user_agents"])
         headers = {'user-agent': random_user_agent}
 
         response = requests.get(url, headers=headers, timeout=5)
