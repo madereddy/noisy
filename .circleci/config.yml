@@ -1,69 +1,91 @@
-version: 2
-executors:
-  docker-publisher:
-    environment:
+--- 
+executors: 
+  docker-publisher: 
+    docker: 
+      - 
+        image: circleci/python3.9
+    environment: 
       IMAGE_NAME: madereddy/noisy
-    docker:
-      - image: circleci/python3.9
-jobs:
-    Python_3.9:
-    docker:
-      - image: circleci/python:3.9
-    working_directory: ~/repo
-
-    steps: &steps
-      - checkout
-
-      # Download and cache dependencies
-      - restore_cache:
-          keys:
-          - v1-dependencies-{{ checksum "requirements.txt" }}
-          # fallback to using the latest cache if no exact match is found
-          - v1-dependencies-
-
-      - run:
-          name: install dependencies
-          command: |
-            mkdir -p ./venv
-            virtualenv ./venv
-            . venv/bin/activate
-            pip install -r requirements.txt
-      - save_cache:
-          paths:
-            - ./venv
-          key: v1-dependencies-{{ checksum "requirements.txt" }}
-
-      - run:
-          name: run script
-          # make sure the script runs, set a 60s timeout
-          command: |
-            . venv/bin/activate
-            python --version
-            pip --version
-            python noisy.py --config config.json --timeout 60
-      - store_artifacts:
-          path: test-reports
-          destination: test-reports
-  publish-latest:
+jobs: 
+  build: 
     executor: docker-publisher
-    steps:
-      - attach_workspace:
+    steps: 
+      - checkout
+      - setup_remote_docker
+      - 
+        run: 
+          command: "docker build -t $IMAGE_NAME:latest .\n"
+          name: "Build Docker image"
+      - 
+        run: 
+          command: "docker save -o image.tar $IMAGE_NAME"
+          name: "Archive Docker image"
+      - 
+        persist_to_workspace: 
+          paths: 
+            - ./image.tar
+          root: "."
+      - 
+        restore_cache: 
+          keys: 
+            - "v1-dependencies-{{ checksum \"requirements.txt\" }}"
+            - v1-dependencies-
+      - 
+        run: 
+          command: |
+              mkdir -p ./venv
+              virtualenv ./venv
+              . venv/bin/activate
+              pip install -r requirements.txt
+          name: "install dependencies"
+      - 
+        save_cache: 
+          key: "v1-dependencies-{{ checksum \"requirements.txt\" }}"
+          paths: 
+            - ./venv
+      - 
+        run: 
+          command: |
+              . venv/bin/activate
+              python --version
+              pip --version
+              python noisy.py --config config.json --timeout 60
+          name: "run script"
+      - 
+        store_artifacts: 
+          destination: test-reports
+          path: test-reports
+  publish-latest: 
+    executor: docker-publisher
+    steps: 
+      - 
+        attach_workspace: 
           at: /tmp/workspace
       - setup_remote_docker
-      - run:
-          name: Load archived Docker image
-          command: docker load -i /tmp/workspace/image.tar
-      - run:
-          name: Publish Docker Image to Docker Hub
+      - 
+        run: 
+          command: "docker load -i /tmp/workspace/image.tar"
+          name: "Load archived Docker image"
+      - 
+        run: 
           command: |
-            echo "$docker-password" | docker login -u "$docker-username" --password-stdin
-            docker push $image:latest
-workflows:
+              echo "$AccessToken" | docker login -u "$Login " --password-stdin
+              docker push $IMAGE_NAME:latest
+          name: "Publish Docker Image to Docker Hub"
+version: 2.1
+workflows: 
+  build-master: 
+    jobs: 
+      - 
+        build: 
+          filters: 
+            branches: 
+              only: master
+      - 
+        publish-latest: 
+          filters: 
+            branches: 
+              only: master
+          requires: 
+            - build
   version: 2
-  build:
-    jobs:
-      - Python_3.9
-      - publish-latest:
-            docker-username: Login 
-            docker-password: AccessToken 
-            image: Noisy 
