@@ -4,7 +4,7 @@ executors:
     environment:
       IMAGE_NAME: madereddy/noisy
     docker:
-      - image: circleci/python3.9
+      - image: python/alpine
 jobs:
   build:
     executor: docker-publisher
