@@ -1,4 +1,4 @@
---- 
+version: 2.1
 executors: 
   docker-publisher: 
     docker: 
@@ -72,8 +72,8 @@ jobs:
               echo "$AccessToken" | docker login -u "$Login " --password-stdin
               docker push $IMAGE_NAME:latest
           name: "Publish Docker Image to Docker Hub"
-version: 2.1
 workflows: 
+  version: 2
   build-master: 
     jobs: 
       - 
@@ -88,4 +88,3 @@ workflows:
               only: master
           requires: 
             - build
-  version: 2
