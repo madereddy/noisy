@@ -4,13 +4,21 @@ executors:
     environment:
       IMAGE_NAME: madereddy/noisy
     docker:
-      - image: python/alpine
+      - image: circleci/python3.9
 jobs:
   build:
     executor: docker-publisher
     steps:
       - checkout
       - setup_remote_docker
+      - run: 
+          name: Docker Hub login if available
+          command: |
+            if [ -n "$DOCKERHUB_USERNAME" ]; then
+              docker login --username $Login --password $AccessToken
+            else
+              echo "Docker Hub credentials unavailable, pulling anonymously"
+            fi
       - run:
           name: Build Docker image
           command: |
