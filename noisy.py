@@ -237,7 +237,7 @@ class Crawler(object):
                 logging.debug("found {} links".format(len(self._links)))
                 self._browse_from_links()
 
-            except requests.exceptions.RequestException:
+            except (requests.exceptions.RequestException, UnicodeDecodeError):
                 logging.warning("Error connecting to root url: {}".format(url))
                 
             except MemoryError:
