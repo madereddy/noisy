@@ -11,7 +11,7 @@ from urllib3.exceptions import LocationParseError
 
 import fake_useragent
 from fake_useragent import UserAgent
-ua = UserAgent(min_percentage=15)
+ua = UserAgent(min_percentage=15.1)
 
 from urlparse import urljoin, urlparse
 
