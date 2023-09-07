@@ -4,23 +4,16 @@ import json
 import logging
 import random
 import re
-import sys
 import time
 
 import requests
 from urllib3.exceptions import LocationParseError
 
-try:                 # Python 2
-    from urllib.parse import urljoin, urlparse
-except ImportError:  # Python 3
-    from urlparse import urljoin, urlparse
+import fake_useragent
+from fake_useragent import UserAgent
+ua = UserAgent(min_percentage=15.1)
 
-try:                 # Python 2
-    reload(sys)
-    sys.setdefaultencoding('latin-1')
-except NameError:    # Python 3
-    pass
-
+from urllib.parse import urljoin, urlparse
 
 class Crawler(object):
     def __init__(self):
@@ -43,7 +36,7 @@ class Crawler(object):
         :param url: the url to visit
         :return: the response Requests object
         """
-        random_user_agent = random.choice(self._config["user_agents"])
+        random_user_agent = ua.random
         headers = {'user-agent': random_user_agent}
 
         response = requests.get(url, headers=headers, timeout=5)
