@@ -47,12 +47,12 @@ jobs:
             . venv/bin/activate
             python --version
             pip --version
-            python noisy.py --config config.json --timeout 60
+            python noisy.py --config config.json --min_sleep 1 --max_sleep 5 --timeout 20
 
       - run:
           name: Test Docker image
           command: |
-            docker run $IMAGE_NAME --config config.json --min_sleep 1 --max_sleep 5 --timeout 60
+            docker run $IMAGE_NAME --config config.json --min_sleep 1 --max_sleep 5 --timeout 20
       
       - store_artifacts:
           path: test-reports

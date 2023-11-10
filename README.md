@@ -42,10 +42,12 @@ $ python noisy.py --help
 usage: noisy.py [-h] [--log -l] --config -c [--timeout -t]
 
 optional arguments:
-  -h, --help    show this help message and exit
-  --log -l      logging level
-  --config -c   config file
-  --timeout -t  for how long the crawler should be running, in seconds
+  -h, --help        show this help message and exit
+  --log -l          logging level
+  --config -c       config file
+  --timeout -t      for how long the crawler should be running, in seconds
+  --min_sleep -min  overide min_sleep that has been predefined in config file
+  --max_sleep -max  overide max_sleep that has been predefined in config file
 ```
 only the config file argument is required.
 
@@ -80,9 +82,9 @@ DEBUG:urllib3.connectionpool:https://www.reddit.com:443 "GET /user/Saditon HTTP/
 
 1. Pull the container and run it:
 
-`docker run -it madereddy/noisy --config config.json`
+`docker run -it madereddy/noisy`
 
-2. Use a compose file inside a docker-compose.yml or portainer stack
+2. Use a compose file inside a docker-compose.yml
 
 ````````````
 version: "2"
