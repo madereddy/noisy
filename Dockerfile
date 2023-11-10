@@ -10,5 +10,4 @@ COPY --from=builder /home/nonroot/.local/lib/python3.12/site-packages /home/nonr
 
 COPY . /
 
-ENTRYPOINT [ "python", "/noisy.py" ]
-CMD ["--config", "config.json"]
+ENTRYPOINT [ "python", "/noisy.py", "--config", "config.json"]
