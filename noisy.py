@@ -247,8 +247,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--log', metavar='-l', type=str, help='logging level', default='info')
     parser.add_argument('--config', metavar='-c', required=True, type=str, help='config file')
-    parser.add_argument('--timeout', metavar='-t', required=False, type=int,
-                        help='for how long the crawler should be running, in seconds', default=False)
+    parser.add_argument('--timeout', metavar='-t', required=False, type=int, help='for how long the crawler should be running, in seconds', default=False)
+    parser.add_argument('--min_sleep', metavar='-min', required=False, type=int, help='Minimum sleep before clicking another link.')
+    parser.add_argument('--max_sleep', metavar='-max', required=False, type=int, help='Maximum sleep before clicking another link.')
     args = parser.parse_args()
 
     level = getattr(logging, args.log.upper())
@@ -259,6 +260,10 @@ def main():
 
     if args.timeout:
         crawler.set_option('timeout', args.timeout)
+    if args.min_sleep:
+        crawler.set_option('min_sleep', args.min_sleep)
+    if args.max_sleep:
+        crawler.set_option('max_sleep', args.max_sleep)
 
     crawler.crawl()
 
