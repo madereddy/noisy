@@ -18,7 +18,7 @@ jobs:
       - run:
           name: Test Docker image
           command: |
-            timeout 60 docker run $IMAGE_NAME --config config.json --min_sleep 1 --max_sleep 5; test $? -eq 124 && echo "Container ran for 60 seconds without failing"
+            timeout 60 docker run [--config config.json --min_sleep 1 --max_sleep 5]; test $? -eq 124 && echo "Container ran for 60 seconds without failing"
       - run:
           name: Archive Docker image
           command: docker save -o image.tar $IMAGE_NAME
