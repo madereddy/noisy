@@ -8,6 +8,6 @@ WORKDIR /app
 # Make sure you update Python version in path
 COPY --from=builder /home/nonroot/.local/lib/python3.12/site-packages /home/nonroot/.local/lib/python3.12/site-packages
 
-COPY . /
+COPY . .
 
-ENTRYPOINT [ "python", "/noisy.py"]
+ENTRYPOINT [ "python", "/app/noisy.py", "--config", "/app/config.json"]
