@@ -74,7 +74,13 @@ workflows:
   version: 2
   build-master:
     jobs:
-      - build
+      - build:
+          filters:
+            branches:
+              only: master
       - publish-latest:
           requires:
             - build
+          filters:
+            branches:
+              only: master
