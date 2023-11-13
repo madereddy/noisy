@@ -34,7 +34,7 @@ jobs:
             mkdir -p ./venv
             virtualenv ./venv
             . venv/bin/activate
-            pip install -r requirements.txt
+            pip3 install -r requirements.txt
       - save_cache:
           paths:
             - ./venv
@@ -45,9 +45,7 @@ jobs:
           # make sure the script runs, set a 60s timeout
           command: |
             . venv/bin/activate
-            python --version
-            pip --version
-            python noisy.py --config config.json --min_sleep 1 --max_sleep 5 --timeout 20
+            python3 noisy.py --config config.json --min_sleep 1 --max_sleep 5 --timeout 20
 
       - run:
           name: Test Docker image
