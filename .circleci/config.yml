@@ -34,6 +34,7 @@ jobs:
             mkdir -p ./venv
             virtualenv ./venv
             . venv/bin/activate
+            python3.12 -m ensurepip --upgrade
             pip3 install -r requirements.txt
       - save_cache:
           paths:
