@@ -24,19 +24,21 @@ jobs:
             - ./image.tar
       - restore_cache:
           keys:
-          - v1-dependencies-{{ checksum "requirements.txt" }}
+          - v2-dependencies-{{ checksum "requirements.txt" }}
           # fallback to using the latest cache if no exact match is found
-          - v1-dependencies-
+          - v2-dependencies-
 
       - run:
           name: install dependencies
           command: |
+            mkdir -p ./venv
+            virtualenv ./venv
             . venv/bin/activate
             pip3 install -r requirements.txt
       - save_cache:
           paths:
             - ./venv
-          key: v1-dependencies-{{ checksum "requirements.txt" }}
+          key: v2-dependencies-{{ checksum "requirements.txt" }}
 
       - run:
           name: run script
