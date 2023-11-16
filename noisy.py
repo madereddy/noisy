@@ -36,7 +36,7 @@ class Crawler:
         :param url: the url to visit
         :return: the response Requests object
         """
-        random_user_agent = UA.sys_random
+        random_user_agent = UA.random
         headers = {"user-agent": random_user_agent}
         return requests.get(url, headers=headers, timeout=5)
 
