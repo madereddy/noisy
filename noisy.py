@@ -142,7 +142,7 @@ class Crawler:
             raise self.CrawlerTimedOut
         random_link = SYS_RANDOM.choice(self._links)
         try:
-            logging.info("Visiting {}".format(random_link))
+            logging.info("Visiting {}", random_link)
             sub_page = self._request(random_link).content
             sub_links = self._extract_urls(sub_page, random_link)
 
@@ -158,7 +158,9 @@ class Crawler:
                 # remove the dead-end link from our list
                 self._remove_and_blacklist(random_link)
         except (requests.exceptions.RequestException, UnicodeDecodeError):
-            logging.debug("Exception on URL: %s, removing from list and trying again!" % random_link)
+            logging.debug(
+                "Exception on URL: %s, removing from list and trying again!".format(random_link)
+            )
             self._remove_and_blacklist(random_link)
         self._browse_from_links(depth + 1)
 
