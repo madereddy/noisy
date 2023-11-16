@@ -142,7 +142,7 @@ class Crawler:
             raise self.CrawlerTimedOut
         random_link = SYS_RANDOM.choice(self._links)
         try:
-            logging.info("Visiting {}", random_link)
+            logging.info("Visiting {}".format(random_link))
             sub_page = self._request(random_link).content
             sub_links = self._extract_urls(sub_page, random_link)
 
