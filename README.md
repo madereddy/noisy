@@ -1,4 +1,5 @@
-# Noisy 
+# Noisy
+
 [![CircleCI](https://circleci.com/gh/madereddy/noisy/tree/master.svg?style=shield)](https://circleci.com/gh/madereddy/noisy/tree/master)
 ![Docker Pulls][pulls]
 
@@ -21,11 +22,13 @@ pip install requests
 ### Usage
 
 Clone the repository
+
 ```
 git clone https://github.com/madereddy/noisy.git
 ```
 
 Navigate into the `noisy` directory
+
 ```
 cd noisy
 ```
@@ -37,6 +40,7 @@ python noisy.py --config config.json
 ```
 
 The program can accept a number of command line arguments:
+
 ```
 $ python noisy.py --help
 usage: noisy.py [-h] [--log -l] --config -c [--timeout -t]
@@ -49,9 +53,11 @@ optional arguments:
   --min_sleep -min  overide min_sleep that has been predefined in config file
   --max_sleep -max  overide max_sleep that has been predefined in config file
 ```
+
 only the config file argument is required.
 
-###  Output
+### Output
+
 ```
 $ docker run -it noisy --config config.json --log debug
 DEBUG:urllib3.connectionpool:Starting new HTTP connection (1): 4chan.org:80
@@ -86,14 +92,15 @@ DEBUG:urllib3.connectionpool:https://www.reddit.com:443 "GET /user/Saditon HTTP/
 
 2. Use a compose file inside a docker-compose.yml
 
-````````````
+```
 version: "2"
 services:
   noisy:
     image: madereddy/noisy:latest
     container_name: noisy
     restart: always
-````````````
+```
+
 ## Some examples
 
 Some edge-cases examples are available on the `examples` folder. You can read more there [examples/README.md](examples/README.md).
@@ -101,7 +108,7 @@ Some edge-cases examples are available on the `examples` folder. You can read mo
 ## Authors
 
 * **Itay Hury** - *Initial work* - [1tayH](https://github.com/1tayH)
-* **madereddy**- *Docker build + Python Upgrade* 
+* **madereddy**- *Docker build + Python Upgrade*
 
 ## License
 
@@ -110,4 +117,4 @@ This project is licensed under the GNU GPLv3 License - see the [LICENSE.md](LICE
 ## Acknowledgments
 
 This project has been inspired by
-[https://github.com/1tayH/noisy]
+\[https://github.com/1tayH/noisy]
