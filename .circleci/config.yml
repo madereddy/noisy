@@ -33,7 +33,7 @@ jobs:
           command: |
             mkdir -p ./venv
             echo "this worked"
-            virtualenv ./venv
+            #virtualenv ./venv
             echo "this worked 2"
             . venv/bin/activate
             echo "this worked 3"
