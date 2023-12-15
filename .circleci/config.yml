@@ -48,7 +48,7 @@ jobs:
           name: run script
           # make sure the script runs, set a 60s timeout
           command: |
-            . venv/bin/activate
+            . venvd/bin/activate
             python3 noisy.py --config config.json --min_sleep 1 --max_sleep 5 --timeout 20
 
       - run:
