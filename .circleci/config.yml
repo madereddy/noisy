@@ -35,7 +35,7 @@ jobs:
             echo "this worked"
             virtualenv ./venv
             echo "this worked 2"
-            . venvd/bin/activate
+            . venv/bin/activate
             echo "this worked 3"
             pip3 install -r requirements.txt
             echo "this worked 4"
@@ -48,7 +48,7 @@ jobs:
           name: run script
           # make sure the script runs, set a 60s timeout
           command: |
-            . venvd/bin/activate
+            . venv/bin/activate
             python3 noisy.py --config config.json --min_sleep 1 --max_sleep 5 --timeout 20
 
       - run:
