@@ -34,7 +34,7 @@ jobs:
             mkdir -p ./venv
             echo "this worked"
             virtualenv ./venv
-            echo "this worked 2"
+            # echo "this worked 2"
             . venv/bin/activate
             echo "this worked 3"
             pip3 install -r requirements.txt
