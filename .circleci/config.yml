@@ -12,56 +12,35 @@ jobs:
       - checkout
       - setup_remote_docker
       - run:
-          name: Build Docker image
+          name: Install Docker Buildx
           command: |
-            docker build -t $IMAGE_NAME:latest .
+            DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
+            mkdir -p $DOCKER_CONFIG/cli-plugins
+            curl -SL "https://github.com/docker/buildx/releases/download/v0.16.2/buildx-v0.16.2.linux-amd64" -o $DOCKER_CONFIG/cli-plugins/docker-buildx
+            chmod a+x $DOCKER_CONFIG/cli-plugins/docker-buildx
       - run:
-          name: Archive Docker image
-          command: docker save -o image.tar $IMAGE_NAME
-      - persist_to_workspace:
-          root: .
-          paths:
-            - ./image.tar
-      - restore_cache:
-          keys:
-          - v2-dependencies-{{ checksum "requirements.txt" }}
-          # fallback to using the latest cache if no exact match is found
-          - v2-dependencies-
-
-      - run:
-          name: Test Docker image
+          name: Create and use new Buildx builder
           command: |
-            docker run $IMAGE_NAME --config config.json --min_sleep 1 --max_sleep 5 --timeout 20
+            docker buildx create --use
+      - run:
+          name: Build and push multi-arch Docker image
+          command: |
+            echo "$AccessToken" | docker login -u "$Login" --password-stdin
+            docker buildx build --platform linux/amd64,linux/arm64 -t $IMAGE_NAME:latest --push .
+      - run:
+          name: Test Docker image (amd64)
+          command: |
+            docker run --platform linux/amd64 $IMAGE_NAME:latest --config config.json --min_sleep 1 --max_sleep 5 --timeout 20
       
       - store_artifacts:
           path: test-reports
           destination: test-reports
 
-  publish-latest:
-    executor: docker-publisher
-    steps:
-      - attach_workspace:
-          at: /tmp/workspace
-      - setup_remote_docker
-      - run:
-          name: Load archived Docker image
-          command: docker load -i /tmp/workspace/image.tar
-      - run:
-          name: Publish Docker Image to Docker Hub
-          command: |
-            echo "$AccessToken" | docker login -u "$Login" --password-stdin
-            docker push $IMAGE_NAME:latest
 workflows:
   version: 2
   build-master:
     jobs:
       - build:
-          filters:
-            branches:
-              only: master
-      - publish-latest:
-          requires:
-            - build
           filters:
             branches:
               only: master
