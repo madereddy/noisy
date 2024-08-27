@@ -107,14 +107,15 @@ Some edge-cases examples are available on the `examples` folder. You can read mo
 
 ## Authors
 
-* **Itay Hury** - *Initial work* - [1tayH](https://github.com/1tayH)
-* **madereddy**- *Docker build + Python Upgrade*
+* [**Itay Hury**](https://github.com/1tayH) - *Initial work*
+* [**madereddy**](https://github.com/madereddy) - *Docker build + Python Upgrade*
+* [**B3CKDOOR**](https://github.com/B3CKDOOR) - *Bugfixes*
 
 ## License
 
-This project is licensed under the GNU GPLv3 License - see the [LICENSE.md](LICENSE.md) file for details
+This project is licensed under the GNU GPLv3 License - see the [LICENSE](LICENSE) file for details
 
 ## Acknowledgments
 
 This project has been inspired by
-\[https://github.com/1tayH/noisy]
+[1tayH/noisy](https://github.com/1tayH/noisy)
