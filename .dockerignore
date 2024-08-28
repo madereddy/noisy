@@ -1,8 +1,10 @@
 #Folders
 examples
-.git
 .github
+.circleci
 
 #Files
 .gitignore
 .dockerignore
+README.md
+LICENSE
