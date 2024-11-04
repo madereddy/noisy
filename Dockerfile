@@ -1,4 +1,4 @@
-FROM cgr.dev/chainguard/python:latest-dev@sha256:7500c2ba49e1061f88901b77780cb40f54431c7958606c85ef2e04c9e3d22a9a as builder
+FROM cgr.dev/chainguard/python:latest-dev@sha256:5a34283cae520c1c413cc333a1865a673f4de28cc5b47cb57ac6db20403450d1 as builder
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt --user
