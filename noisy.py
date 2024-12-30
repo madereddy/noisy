@@ -10,9 +10,8 @@ import requests
 from fake_useragent import UserAgent
 from urllib3.exceptions import LocationParseError
 
-UA = UserAgent(min_percentage=15.1)
+ua = UserAgent(min_version=120.0)
 REQUEST_COUNTER = -1
-SYS_RANDOM = random.SystemRandom()
 
 
 class Crawler:
@@ -36,9 +35,9 @@ class Crawler:
         :param url: the url to visit
         :return: the response Requests object
         """
-        random_user_agent = UA.random
+        random_user_agent = ua.random
         headers = {"user-agent": random_user_agent}
-        return requests.get(url, headers=headers, timeout=5)
+        return requests.get(url, headers=headers, timeout=10)
 
     @staticmethod
     def _normalize_link(link, root_url):
