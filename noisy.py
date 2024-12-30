@@ -12,6 +12,7 @@ from urllib3.exceptions import LocationParseError
 
 ua = UserAgent(min_version=120.0)
 REQUEST_COUNTER = -1
+SYS_RANDOM = random.SystemRandom()
 
 
 class Crawler:
