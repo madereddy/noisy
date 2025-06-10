@@ -237,7 +237,9 @@ class Crawler:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--log", metavar="-l", type=str, help="logging level", default="info")
+    parser.add_argument("--log", metavar="-l", type=str, default="info",
+                    choices=["debug", "info", "warning", "error", "critical"],
+                    help="logging level")
     parser.add_argument("--config", metavar="-c", required=True, type=str, help="config file")
     parser.add_argument(
         "--timeout",
@@ -263,7 +265,10 @@ def main():
     )
     args = parser.parse_args()
 
-    level = getattr(logging, args.log.upper())
+    log_level_str = args.log.upper()
+    if not hasattr(logging, log_level_str):
+        raise ValueError(f"Invalid log level: {args.log}")
+    level = getattr(logging, log_level_str)
     logging.basicConfig(level=level)
 
     crawler = Crawler()
