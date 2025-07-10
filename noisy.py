@@ -7,8 +7,10 @@ import random
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Optional, List
 from urllib.parse import urljoin, urlparse
+import os
 
 import requests
 from bs4 import BeautifulSoup
@@ -80,17 +82,21 @@ class Crawler:
         return link
 
     def _is_valid(self, url: str) -> bool:
-        regex = re.compile(r"^(?:http|ftp)s?://"
-                           r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+"
-                           r"(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|"
-                           r"\d{1,3}(?:\.\d{1,3}){3})"
-                           r"(?::\d+)?(?:/?|[/?]\S+)$", re.IGNORECASE)
+        regex = re.compile(
+            r"^(?:http|ftp)s?://"
+            r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+"
+            r"(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|"
+            r"\d{1,3}(?:\.\d{1,3}){3})"
+            r"(?::\d+)?(?:/?|[/?]\S+)$",
+            re.IGNORECASE,
+        )
         return re.match(regex, url) is not None
 
     def _extract_urls(self, body: bytes, root_url: str) -> List[str]:
         soup = BeautifulSoup(body, "html.parser")
         hrefs = [a.get("href") for a in soup.find_all("a", href=True)]
         norm = [self._normalize_link(h, root_url) for h in hrefs]
+        # Filter for valid and non-blacklisted URLs
         return [u for u in norm if u and self._is_valid(u) and u not in self._config["blacklisted_urls"]]
 
     def _browse_from_links(self, depth=0):
@@ -123,9 +129,27 @@ class Crawler:
             self._links.remove(link)
 
     def _is_timeout_reached(self) -> bool:
-        if not self._config["timeout"]:
+        if not self._config.get("timeout"):
             return False
         return datetime.datetime.now() >= self._start_time + datetime.timedelta(seconds=self._config["timeout"])
+
+    def load_config_file(self, file_path: str):
+        base_dir = Path("configs").resolve()  # base directory for configs
+        requested_path = (base_dir / file_path).resolve()
+
+        # Prevent path traversal outside configs/
+        if not str(requested_path).startswith(str(base_dir) + os.sep):
+            raise ValueError(f"Config file path {requested_path} is outside the allowed directory {base_dir}")
+
+        with open(requested_path, "r") as config_file:
+            config = json.load(config_file)
+            self.set_config(config)
+
+    def set_config(self, config: dict):
+        self._config = config
+
+    def set_option(self, option: str, value):
+        self._config[option] = value
 
     def crawl(self):
         self._start_time = datetime.datetime.now()
