@@ -1,185 +1,181 @@
 import argparse
+import copy
 import datetime
 import json
 import logging
 import random
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional, List
 from urllib.parse import urljoin, urlparse
 
 import requests
+from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 from urllib3.exceptions import LocationParseError
 
+# Globals
 ua = UserAgent(min_version=120.0)
-REQUEST_COUNTER = -1
 SYS_RANDOM = random.SystemRandom()
 
 
-class Crawler:
-    def __init__(self):
-        self._config = {}
-        self._links = []
-        self._start_time = None
+def setup_logging(log_level_str: str, logfile: Optional[str] = None):
+    level = getattr(logging, log_level_str.upper(), logging.INFO)
+    root = logging.getLogger()
+    root.setLevel(logging.WARNING)
 
+    handler_stream = logging.StreamHandler()
+    handler_stream.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+    root.addHandler(handler_stream)
+
+    if logfile:
+        handler_file = logging.FileHandler(logfile)
+        handler_file.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        root.addHandler(handler_file)
+
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("requests").setLevel(logging.WARNING)
+    root.setLevel(level)
+
+
+def request_with_retries(url: str, retries: int = 3, backoff_factor: float = 0.5) -> requests.Response:
+    delay = backoff_factor
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.get(url, headers={"user-agent": ua.random}, timeout=10)
+            resp.raise_for_status()
+            return resp
+        except Exception as e:
+            logging.debug(f"Attempt {attempt} failed for {url}: {e}")
+            if attempt < retries:
+                time.sleep(delay)
+                delay *= 2
+            else:
+                raise
+
+
+class Crawler:
     class CrawlerTimedOut(Exception):
         pass
 
-    @staticmethod
-    def _request(url):
-        headers = {"user-agent": ua.random}
-        return requests.get(url, headers=headers, timeout=10)
+    def __init__(self, config: dict):
+        self._config = config
+        self._links: List[str] = []
+        self._start_time = None
 
-    @staticmethod
-    def _normalize_link(link, root_url):
+    def _request(self, url: str) -> requests.Response:
+        return request_with_retries(url)
+
+    def _normalize_link(self, link: str, root_url: str) -> Optional[str]:
         try:
-            parsed_url = urlparse(link)
+            parsed = urlparse(link)
         except ValueError:
             return None
-        parsed_root_url = urlparse(root_url)
-
+        root_parsed = urlparse(root_url)
         if link.startswith("//"):
-            return f"{parsed_root_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
-        if not parsed_url.scheme:
+            return f"{root_parsed.scheme}://{parsed.netloc}{parsed.path}"
+        if not parsed.scheme:
             return urljoin(root_url, link)
         return link
 
-    @staticmethod
-    def _is_valid_url(url):
-        regex = re.compile(
-            r"^(?:http|ftp)s?://"
-            r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|"
-            r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"
-            r"(?::\d+)?"
-            r"(?:/?|[/?]\S+)$",
-            re.IGNORECASE,
-        )
+    def _is_valid(self, url: str) -> bool:
+        regex = re.compile(r"^(?:http|ftp)s?://"
+                           r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+"
+                           r"(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|"
+                           r"\d{1,3}(?:\.\d{1,3}){3})"
+                           r"(?::\d+)?(?:/?|[/?]\S+)$", re.IGNORECASE)
         return re.match(regex, url) is not None
 
-    def _is_blacklisted(self, url):
-        return any(b in url for b in self._config.get("blacklisted_urls", []))
-
-    def _should_accept_url(self, url):
-        return url and self._is_valid_url(url) and not self._is_blacklisted(url)
-
-    def _extract_urls(self, body, root_url):
-        pattern = r"href=[\"'](?!#)(.*?)[\"'].*?"
-        urls = re.findall(pattern, str(body))
-        normalize_urls = [self._normalize_link(url, root_url) for url in urls]
-        return list(filter(self._should_accept_url, normalize_urls))
-
-    def _remove_and_blacklist(self, link):
-        self._config["blacklisted_urls"].append(link)
-        self._links.remove(link)
+    def _extract_urls(self, body: bytes, root_url: str) -> List[str]:
+        soup = BeautifulSoup(body, "html.parser")
+        hrefs = [a.get("href") for a in soup.find_all("a", href=True)]
+        norm = [self._normalize_link(h, root_url) for h in hrefs]
+        return [u for u in norm if u and self._is_valid(u) and u not in self._config["blacklisted_urls"]]
 
     def _browse_from_links(self, depth=0):
         if not self._links or depth >= self._config["max_depth"]:
-            logging.debug("Hit a dead end or reached max depth")
+            logging.debug("Dead end or max depth reached")
             return
         if self._is_timeout_reached():
             raise self.CrawlerTimedOut
-        random_link = SYS_RANDOM.choice(self._links)
+
+        link = SYS_RANDOM.choice(self._links)
         try:
-            logging.info(f"Visiting {random_link}")
-            sub_page = self._request(random_link).content
-            sub_links = self._extract_urls(sub_page, random_link)
-            time.sleep(SYS_RANDOM.randrange(self._config["min_sleep"], self._config["max_sleep"]))
+            logging.info(f"Visiting {link}")
+            resp = self._request(link)
+            sub_links = self._extract_urls(resp.content, link)
+            time.sleep(SYS_RANDOM.uniform(self._config["min_sleep"], self._config["max_sleep"]))
 
             if len(sub_links) > 1:
                 self._links = sub_links
             else:
-                self._remove_and_blacklist(random_link)
-        except (requests.exceptions.RequestException, UnicodeDecodeError):
-            logging.debug(f"Exception on URL: {random_link}, removing from list")
-            self._remove_and_blacklist(random_link)
+                self._blacklist_link(link)
+        except Exception as e:
+            logging.warning(f"Error on {link}: {e}, blacklisting")
+            self._blacklist_link(link)
 
         self._browse_from_links(depth + 1)
 
-    def load_config_file(self, file_path):
-        with open(file_path, "r") as config_file:
-            config = json.load(config_file)
-            self.set_config(config)
+    def _blacklist_link(self, link: str):
+        if link in self._links:
+            self._config["blacklisted_urls"].append(link)
+            self._links.remove(link)
 
-    def set_config(self, config):
-        self._config = config
-
-    def set_option(self, option, value):
-        self._config[option] = value
-
-    def _is_timeout_reached(self):
+    def _is_timeout_reached(self) -> bool:
         if not self._config["timeout"]:
             return False
-        end_time = self._start_time + datetime.timedelta(seconds=self._config["timeout"])
-        return datetime.datetime.now() >= end_time
+        return datetime.datetime.now() >= self._start_time + datetime.timedelta(seconds=self._config["timeout"])
 
     def crawl(self):
         self._start_time = datetime.datetime.now()
-        while True:
-            url = SYS_RANDOM.choice(self._config["root_urls"])
-            try:
-                body = self._request(url).content
-                self._links = self._extract_urls(body, url)
-                logging.debug("Found {} links".format(len(self._links)))
-                self._browse_from_links()
-            except (requests.exceptions.RequestException, UnicodeDecodeError):
-                logging.warning(f"Error connecting to root URL: {url}")
-            except MemoryError:
-                logging.warning(f"Memory error from: {url}")
-            except LocationParseError:
-                logging.warning(f"URL parsing error: {url}")
-            except self.CrawlerTimedOut:
-                logging.info("Timeout exceeded, exiting crawl")
+        fail_count = 0
+        max_failures = 10
+
+        while fail_count < max_failures:
+            if self._is_timeout_reached():
+                logging.info("Crawler timeout exceeded")
                 return
-
-
-def setup_logging(log_level_str):
-    level = getattr(logging, log_level_str.upper(), logging.INFO)
-
-    # Set root logger to WARNING to silence noisy libraries
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.WARNING)
-    if not root_logger.handlers:
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
-        handler.setFormatter(formatter)
-        root_logger.addHandler(handler)
-
-    # Quiet specific libraries
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("requests").setLevel(logging.WARNING)
-
-    # App logger for this script
-    app_logger = logging.getLogger()
-    app_logger.setLevel(level)
+            root = SYS_RANDOM.choice(self._config["root_urls"])
+            try:
+                logging.info(f"Fetching root URL: {root}")
+                resp = self._request(root)
+                self._links = self._extract_urls(resp.content, root)
+                logging.debug(f"Found {len(self._links)} links")
+                self._browse_from_links()
+                fail_count = 0  # reset on success
+            except self.CrawlerTimedOut:
+                logging.info("Crawler timed out")
+                return
+            except Exception as e:
+                fail_count += 1
+                logging.warning(f"Error at root {root}: {e}")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--log", metavar="-l", type=str, default="info",
-                        choices=["debug", "info", "warning", "error", "critical"],
-                        help="logging level")
-    parser.add_argument("--config", metavar="-c", required=True, type=str, help="config file")
-    parser.add_argument("--timeout", metavar="-t", type=int, default=False,
-                        help="How long the crawler should run (in seconds)")
-    parser.add_argument("--min_sleep", metavar="-min", type=int,
-                        help="Minimum sleep between requests")
-    parser.add_argument("--max_sleep", metavar="-max", type=int,
-                        help="Maximum sleep between requests")
-
+    parser.add_argument("--log", "-l", default="info", choices=["debug", "info", "warning", "error"])
+    parser.add_argument("--logfile", help="Optional log file path")
+    parser.add_argument("--config", "-c", required=True)
+    parser.add_argument("--threads", "-n", type=int, default=2, help="Number of concurrent crawlers")
+    parser.add_argument("--timeout", "-t", type=int, default=None)
+    parser.add_argument("--min_sleep", type=int, default=None)
+    parser.add_argument("--max_sleep", type=int, default=None)
     args = parser.parse_args()
-    setup_logging(args.log)
 
-    crawler = Crawler()
-    crawler.load_config_file(args.config)
+    setup_logging(args.log, args.logfile)
 
-    if args.timeout:
-        crawler.set_option("timeout", args.timeout)
-    if args.min_sleep:
-        crawler.set_option("min_sleep", args.min_sleep)
-    if args.max_sleep:
-        crawler.set_option("max_sleep", args.max_sleep)
+    with open(args.config) as f:
+        cfg = json.load(f)
 
-    crawler.crawl()
+    for key in ("timeout", "min_sleep", "max_sleep"):
+        if getattr(args, key) is not None:
+            cfg[key] = getattr(args, key)
+
+    with ThreadPoolExecutor(max_workers=args.threads) as exe:
+        futures = [exe.submit(Crawler(copy.deepcopy(cfg)).crawl) for _ in range(args.threads)]
+        for _ in as_completed(futures):
+            pass
 
 
 if __name__ == "__main__":
