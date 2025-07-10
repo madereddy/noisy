@@ -2,4 +2,4 @@ requests==2.31.0
 beautifulsoup4==4.12.2
 fake-useragent==0.1.11
 urllib3==2.0.4
-zipp==3.15.0
+zipp==3.19.1
