@@ -7,18 +7,20 @@ import random
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 from typing import Optional, List
 from urllib.parse import urljoin, urlparse
-import os
 
 import requests
 from bs4 import BeautifulSoup
-from fake_useragent import UserAgent
+from random_user_agent.user_agent import UserAgent
+from random_user_agent.params import SoftwareName, OperatingSystem
 from urllib3.exceptions import LocationParseError
 
-# Globals
-ua = UserAgent()
+# Setup UserAgent generator
+software_names = [SoftwareName.CHROME.value, SoftwareName.FIREFOX.value, SoftwareName.EDGE.value]
+operating_systems = [OperatingSystem.WINDOWS.value, OperatingSystem.LINUX.value, OperatingSystem.MACOS.value]
+ua = UserAgent(software_names=software_names, operating_systems=operating_systems, limit=100)
+
 SYS_RANDOM = random.SystemRandom()
 
 
@@ -45,7 +47,8 @@ def request_with_retries(url: str, retries: int = 3, backoff_factor: float = 0.5
     delay = backoff_factor
     for attempt in range(1, retries + 1):
         try:
-            resp = requests.get(url, headers={"user-agent": ua.random}, timeout=10)
+            headers = {"user-agent": ua.get_random_user_agent()}
+            resp = requests.get(url, headers=headers, timeout=10)
             resp.raise_for_status()
             return resp
         except Exception as e:
@@ -82,21 +85,17 @@ class Crawler:
         return link
 
     def _is_valid(self, url: str) -> bool:
-        regex = re.compile(
-            r"^(?:http|ftp)s?://"
-            r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+"
-            r"(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|"
-            r"\d{1,3}(?:\.\d{1,3}){3})"
-            r"(?::\d+)?(?:/?|[/?]\S+)$",
-            re.IGNORECASE,
-        )
+        regex = re.compile(r"^(?:http|ftp)s?://"
+                           r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+"
+                           r"(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|"
+                           r"\d{1,3}(?:\.\d{1,3}){3})"
+                           r"(?::\d+)?(?:/?|[/?]\S+)$", re.IGNORECASE)
         return re.match(regex, url) is not None
 
     def _extract_urls(self, body: bytes, root_url: str) -> List[str]:
         soup = BeautifulSoup(body, "html.parser")
         hrefs = [a.get("href") for a in soup.find_all("a", href=True)]
         norm = [self._normalize_link(h, root_url) for h in hrefs]
-        # Filter for valid and non-blacklisted URLs
         return [u for u in norm if u and self._is_valid(u) and u not in self._config["blacklisted_urls"]]
 
     def _browse_from_links(self, depth=0):
@@ -132,24 +131,6 @@ class Crawler:
         if not self._config.get("timeout"):
             return False
         return datetime.datetime.now() >= self._start_time + datetime.timedelta(seconds=self._config["timeout"])
-
-    def load_config_file(self, file_path: str):
-        base_dir = Path("configs").resolve()  # base directory for configs
-        requested_path = (base_dir / file_path).resolve()
-
-        # Prevent path traversal outside configs/
-        if not str(requested_path).startswith(str(base_dir) + os.sep):
-            raise ValueError(f"Config file path {requested_path} is outside the allowed directory {base_dir}")
-
-        with open(requested_path, "r") as config_file:
-            config = json.load(config_file)
-            self.set_config(config)
-
-    def set_config(self, config: dict):
-        self._config = config
-
-    def set_option(self, option: str, value):
-        self._config[option] = value
 
     def crawl(self):
         self._start_time = datetime.datetime.now()
