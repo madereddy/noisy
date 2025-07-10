@@ -18,7 +18,7 @@ from fake_useragent import UserAgent
 from urllib3.exceptions import LocationParseError
 
 # Globals
-ua = UserAgent(min_version=120.0)
+ua = UserAgent()
 SYS_RANDOM = random.SystemRandom()
 
 
