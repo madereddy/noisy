@@ -1,5 +1,5 @@
 requests==2.32.5
-beautifulsoup4==4.13.5
+beautifulsoup4==4.14.0
 random-user-agent==1.0.1
 urllib3==2.5.0
 zipp==3.23.0
