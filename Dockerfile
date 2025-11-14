@@ -2,7 +2,7 @@ FROM cgr.dev/chainguard/python:latest-dev@sha256:66ad90451e4b930d12fcf5cdf7d6a0c
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt --user
-FROM cgr.dev/chainguard/python:latest@sha256:695359b1e5130bd27e8dab298c8c51c1fb4dc3023fa91eb895ef8b2696211328
+FROM cgr.dev/chainguard/python:latest@sha256:c9faa43ce2bd9f858ba676c8c6e6386a2f4874ebbf63ce2b1fb0501ee2415265
 WORKDIR /app
 
 # Make sure you update Python version in path
