@@ -6,7 +6,7 @@ FROM cgr.dev/chainguard/python:latest@sha256:d2aeeffe317f8da2f13cd47faf29de0372b
 WORKDIR /app
 
 # Make sure you update Python version in path
-COPY --from=builder /home/nonroot/.local/lib/python3.13/site-packages /home/nonroot/.local/lib/python3.13/site-packages
+COPY --from=builder /app /app
 
 COPY . .
 
