@@ -4,7 +4,7 @@ executors:
     environment:
       IMAGE_NAME: madereddy/noisy
     docker:
-      - image: cimg/python:3.14.1
+      - image: cimg/python:3.14.2
 jobs:
   build:
     executor: docker-publisher
