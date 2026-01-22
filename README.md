@@ -5,106 +5,97 @@
 
 [pulls]: https://img.shields.io/docker/pulls/madereddy/noisy
 
-A simple python script that generates random HTTP/DNS traffic noise in the background while you go about your regular web browsing, to make your web traffic data less valuable for selling and for extra obscurity.
+**Noisy** is a Python crawler that generates random HTTP traffic to mimic human browsing behavior. It can crawl top websites using dynamic user agents while slowing down requests to avoid hammering servers or DNS resolvers. The tool is useful for obfuscating real web traffic patterns for privacy and testing purposes.
+
+---
+
+## Features
+
+- Crawls the top websites from [CrUX top lists](https://github.com/zakird/crux-top-lists) (up to 10,000 sites).  
+- Dynamically generates random User-Agent strings for each request.  
+- Mimics human browsing with randomized delays (`min_sleep` and `max_sleep`).  
+
+---
 
 ## Getting Started
 
-These instructions will get you a copy of the project up and running on your local machine
+Clone the repository:
+
+```
+git clone https://github.com/madereddy/noisy.git
+cd noisy
+```
 
 ### Dependencies
 
-Install `requests` if you do not have it already installed, using `pip`:
-
+Install required Python packages:
 ```
-pip install requests
+pip install -r requirements.txt
+```
+
+requirements.txt should include:
+```
+aiohttp
+beautifulsoup4
+random-user-agent
 ```
 
 ### Usage
 
-Clone the repository
+Run the crawler directly:
 
 ```
-git clone https://github.com/madereddy/noisy.git
+python noisy.py
 ```
 
-Navigate into the `noisy` directory
-
-```
-cd noisy
-```
-
-Run the script
-
-```
-python noisy.py --config config.json
-```
-
-The program can accept a number of command line arguments:
-
+The program supports several command-line arguments:
 ```
 $ python noisy.py --help
-usage: noisy.py [-h] [--log -l] --config -c [--timeout -t]
+usage: noisy.py [-h] [--log LOG] [--logfile LOGFILE]
+                [--threads THREADS] [--min_sleep MIN_SLEEP] [--max_sleep MAX_SLEEP]
 
 optional arguments:
-  -h, --help        show this help message and exit
-  --log -l          logging level
-  --config -c       config file
-  --timeout -t      for how long the crawler should be running, in seconds
-  --min_sleep -min  overide min_sleep that has been predefined in config file
-  --max_sleep -max  overide max_sleep that has been predefined in config file
+  -h, --help            Show this help message and exit
+  --log LOG             Logging level (debug, info, warning, error). Default: info
+  --logfile LOGFILE     Optional log file path
+  --threads THREADS, -n Number of concurrent crawlers. Default: 5
+  --min_sleep MIN_SLEEP Minimum sleep between requests (seconds). Default: 2.0
+  --max_sleep MAX_SLEEP Maximum sleep between requests (seconds). Default: 5.0
 ```
 
-only the config file argument is required.
+The crawler automatically fetches the top sites and does not require a config file anymore.
 
 ### Output
 
+The crawler logs visited URLs and warnings/errors:
 ```
-$ docker run -it noisy --config config.json --log debug
-DEBUG:urllib3.connectionpool:Starting new HTTP connection (1): 4chan.org:80
-DEBUG:urllib3.connectionpool:http://4chan.org:80 "GET / HTTP/1.1" 301 None
-DEBUG:urllib3.connectionpool:Starting new HTTP connection (1): www.4chan.org:80
-DEBUG:urllib3.connectionpool:http://www.4chan.org:80 "GET / HTTP/1.1" 200 None
-DEBUG:root:found 92 links
-INFO:root:Visiting http://boards.4chan.org/s4s/
-DEBUG:urllib3.connectionpool:Starting new HTTP connection (1): boards.4chan.org:80
-DEBUG:urllib3.connectionpool:http://boards.4chan.org:80 "GET /s4s/ HTTP/1.1" 200 None
-INFO:root:Visiting http://boards.4chan.org/s4s/thread/6850193#p6850345
-DEBUG:urllib3.connectionpool:Starting new HTTP connection (1): boards.4chan.org:80
-DEBUG:urllib3.connectionpool:http://boards.4chan.org:80 "GET /s4s/thread/6850193 HTTP/1.1" 200 None
-INFO:root:Visiting http://boards.4chan.org/o/
-DEBUG:urllib3.connectionpool:Starting new HTTP connection (1): boards.4chan.org:80
-DEBUG:urllib3.connectionpool:http://boards.4chan.org:80 "GET /o/ HTTP/1.1" 200 None
-DEBUG:root:Hit a dead end, moving to the next root URL
-DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): www.reddit.com:443
-DEBUG:urllib3.connectionpool:https://www.reddit.com:443 "GET / HTTP/1.1" 200 None
-DEBUG:root:found 237 links
-INFO:root:Visiting https://www.reddit.com/user/Saditon
-DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): www.reddit.com:443
-DEBUG:urllib3.connectionpool:https://www.reddit.com:443 "GET /user/Saditon HTTP/1.1" 200 None
-...
+INFO - Fetching top sites from CrUX CSV...
+INFO - Fetched 10000 top sites.
+INFO - Visited: https://www.google.com
+INFO - Visited: https://www.wikipedia.org
+WARNING - DNS/connection error fetching https://nonexistent.example.com: [Errno -2] Name or service not known
+INFO - Visited: https://www.reddit.com
+```
+Log Level
+  - INFO logs visited URLs.
+  - WARNING logs DNS, timeout, or HTTP errors.
+  - DEBUG  can show internal aiohttp requests if logging level is set to debug.
+
+### Docker
+
+Pull and run the container:
+```
+docker run -it madereddy/noisy
 ```
 
-## Use Docker
-
-1. Pull the container and run it:
-
-`docker run -it madereddy/noisy`
-
-2. Use a compose file inside a docker-compose.yml
-
+Or use Docker Compose:
 ```
-version: "2"
 services:
   noisy:
     image: madereddy/noisy:latest
     container_name: noisy
     restart: always
 ```
-
-## Some examples
-
-Some edge-cases examples are available on the `examples` folder. You can read more there [examples/README.md](examples/README.md).
-
 ## Authors
 
 * [**Itay Hury**](https://github.com/1tayH) - *Initial work*
