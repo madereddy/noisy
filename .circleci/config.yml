@@ -29,7 +29,7 @@ jobs:
       - run:
           name: Test Docker image (amd64)
           command: |
-            docker run --platform linux/amd64 $IMAGE_NAME:latest --config config.json --min_sleep 1 --max_sleep 5 --timeout 20
+            docker run --platform linux/amd64 $IMAGE_NAME:latest
       - run:
           name: Build and push multi-arch Docker image
           command: |
