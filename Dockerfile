@@ -33,4 +33,4 @@ COPY --from=builder /app /app
 ENV PATH="/app/venv/bin:$PATH"
 
 # Set entrypoint
-ENTRYPOINT ["python", "/app/noisy.py"]
+ENTRYPOINT [ "python", "/app/noisy.py" ]
