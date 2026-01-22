@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import argparse
 import copy
 import datetime
@@ -9,6 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List
 from urllib.parse import urljoin, urlparse
+import tempfile
 
 import requests
 from bs4 import BeautifulSoup
@@ -16,33 +18,45 @@ from random_user_agent.user_agent import UserAgent
 from random_user_agent.params import SoftwareName, OperatingSystem
 from urllib3.exceptions import LocationParseError
 
+# -------------------------
 # Setup UserAgent generator
+# -------------------------
 software_names = [SoftwareName.CHROME.value, SoftwareName.FIREFOX.value, SoftwareName.EDGE.value]
 operating_systems = [OperatingSystem.WINDOWS.value, OperatingSystem.LINUX.value, OperatingSystem.MACOS.value]
 ua = UserAgent(software_names=software_names, operating_systems=operating_systems, limit=100)
 
 SYS_RANDOM = random.SystemRandom()
 
-
+# -------------------------
+# Logging: stdout only by default (reduces IO)
+# -------------------------
 def setup_logging(log_level_str: str, logfile: Optional[str] = None):
     level = getattr(logging, log_level_str.upper(), logging.INFO)
     root = logging.getLogger()
     root.setLevel(logging.WARNING)
 
+    # Stream handler (stdout)
     handler_stream = logging.StreamHandler()
     handler_stream.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
     root.addHandler(handler_stream)
 
+    # Optional file handler (user-specified)
     if logfile:
+        # Redirect temp logs to /tmp if path is relative to avoid writing to /app
+        if not os.path.isabs(logfile):
+            logfile = os.path.join(tempfile.gettempdir(), logfile)
         handler_file = logging.FileHandler(logfile)
         handler_file.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         root.addHandler(handler_file)
 
+    # Reduce noise from requests/urllib3
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)
     root.setLevel(level)
 
-
+# -------------------------
+# Requests with retry
+# -------------------------
 def request_with_retries(url: str, retries: int = 3, backoff_factor: float = 0.5) -> requests.Response:
     delay = backoff_factor
     for attempt in range(1, retries + 1):
@@ -59,7 +73,9 @@ def request_with_retries(url: str, retries: int = 3, backoff_factor: float = 0.5
             else:
                 raise
 
-
+# -------------------------
+# Crawler class
+# -------------------------
 class Crawler:
     class CrawlerTimedOut(Exception):
         pass
@@ -85,21 +101,24 @@ class Crawler:
         return link
 
     def _is_valid(self, url: str) -> bool:
-        regex = re.compile(r"^(?:http|ftp)s?://"
-                           r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+"
-                           r"(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|"
-                           r"\d{1,3}(?:\.\d{1,3}){3})"
-                           r"(?::\d+)?(?:/?|[/?]\S+)$", re.IGNORECASE)
+        regex = re.compile(
+            r"^(?:http|ftp)s?://"
+            r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+"
+            r"(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|"
+            r"\d{1,3}(?:\.\d{1,3}){3})"
+            r"(?::\d+)?(?:/?|[/?]\S+)$",
+            re.IGNORECASE
+        )
         return re.match(regex, url) is not None
 
     def _extract_urls(self, body: bytes, root_url: str) -> List[str]:
         soup = BeautifulSoup(body, "html.parser")
         hrefs = [a.get("href") for a in soup.find_all("a", href=True)]
         norm = [self._normalize_link(h, root_url) for h in hrefs]
-        return [u for u in norm if u and self._is_valid(u) and u not in self._config["blacklisted_urls"]]
+        return [u for u in norm if u and self._is_valid(u) and u not in self._config.get("blacklisted_urls", [])]
 
     def _browse_from_links(self, depth=0):
-        if not self._links or depth >= self._config["max_depth"]:
+        if not self._links or depth >= self._config.get("max_depth", 0):
             logging.debug("Dead end or max depth reached")
             return
         if self._is_timeout_reached():
@@ -110,7 +129,7 @@ class Crawler:
             logging.info(f"Visiting {link}")
             resp = self._request(link)
             sub_links = self._extract_urls(resp.content, link)
-            time.sleep(SYS_RANDOM.uniform(self._config["min_sleep"], self._config["max_sleep"]))
+            time.sleep(SYS_RANDOM.uniform(self._config.get("min_sleep", 1), self._config.get("max_sleep", 2)))
 
             if len(sub_links) > 1:
                 self._links = sub_links
@@ -124,7 +143,7 @@ class Crawler:
 
     def _blacklist_link(self, link: str):
         if link in self._links:
-            self._config["blacklisted_urls"].append(link)
+            self._config.setdefault("blacklisted_urls", []).append(link)
             self._links.remove(link)
 
     def _is_timeout_reached(self) -> bool:
@@ -148,7 +167,7 @@ class Crawler:
                 self._links = self._extract_urls(resp.content, root)
                 logging.debug(f"Found {len(self._links)} links")
                 self._browse_from_links()
-                fail_count = 0  # reset on success
+                fail_count = 0
             except self.CrawlerTimedOut:
                 logging.info("Crawler timed out")
                 return
@@ -156,7 +175,9 @@ class Crawler:
                 fail_count += 1
                 logging.warning(f"Error at root {root}: {e}")
 
-
+# -------------------------
+# Main entry
+# -------------------------
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--log", "-l", default="info", choices=["debug", "info", "warning", "error"])
@@ -177,11 +198,11 @@ def main():
         if getattr(args, key) is not None:
             cfg[key] = getattr(args, key)
 
+    # Run crawlers concurrently
     with ThreadPoolExecutor(max_workers=args.threads) as exe:
         futures = [exe.submit(Crawler(copy.deepcopy(cfg)).crawl) for _ in range(args.threads)]
         for _ in as_completed(futures):
             pass
-
 
 if __name__ == "__main__":
     main()
