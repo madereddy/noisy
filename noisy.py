@@ -1,208 +1,158 @@
-#!/usr/bin/env python3
 import argparse
+import asyncio
 import copy
-import datetime
-import json
+import csv
+import gzip
 import logging
 import random
-import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, List
-from urllib.parse import urljoin, urlparse
-import tempfile
+import socket
+from typing import List, Optional
+from urllib.parse import urljoin
 
-import requests
+import aiohttp
 from bs4 import BeautifulSoup
 from random_user_agent.user_agent import UserAgent
 from random_user_agent.params import SoftwareName, OperatingSystem
-from urllib3.exceptions import LocationParseError
 
-# -------------------------
-# Setup UserAgent generator
-# -------------------------
+# Configurable constants
+CRUX_TOP_CSV = "https://raw.githubusercontent.com/zakird/crux-top-lists/main/data/global/current.csv.gz"
+SYS_RANDOM = random.SystemRandom()
+
+# Setup UserAgent generator (dynamic, random per request)
 software_names = [SoftwareName.CHROME.value, SoftwareName.FIREFOX.value, SoftwareName.EDGE.value]
 operating_systems = [OperatingSystem.WINDOWS.value, OperatingSystem.LINUX.value, OperatingSystem.MACOS.value]
 ua = UserAgent(software_names=software_names, operating_systems=operating_systems, limit=100)
 
-SYS_RANDOM = random.SystemRandom()
 
-# -------------------------
-# Logging: stdout only by default (reduces IO)
-# -------------------------
 def setup_logging(log_level_str: str, logfile: Optional[str] = None):
     level = getattr(logging, log_level_str.upper(), logging.INFO)
     root = logging.getLogger()
-    root.setLevel(logging.WARNING)
+    root.setLevel(level)
 
-    # Stream handler (stdout)
     handler_stream = logging.StreamHandler()
     handler_stream.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
     root.addHandler(handler_stream)
 
-    # Optional file handler (user-specified)
     if logfile:
-        # Redirect temp logs to /tmp if path is relative to avoid writing to /app
-        if not os.path.isabs(logfile):
-            logfile = os.path.join(tempfile.gettempdir(), logfile)
         handler_file = logging.FileHandler(logfile)
         handler_file.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         root.addHandler(handler_file)
 
-    # Reduce noise from requests/urllib3
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("aiohttp").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)
-    root.setLevel(level)
 
-# -------------------------
-# Requests with retry
-# -------------------------
-def request_with_retries(url: str, retries: int = 3, backoff_factor: float = 0.5) -> requests.Response:
-    delay = backoff_factor
-    for attempt in range(1, retries + 1):
-        try:
-            headers = {"user-agent": ua.get_random_user_agent()}
-            resp = requests.get(url, headers=headers, timeout=10)
+
+async def fetch_text(session: aiohttp.ClientSession, url: str, user_agents: list[str]) -> Optional[str]:
+    """Fetch page text with random User-Agent, handling DNS and connection errors gracefully."""
+    headers = {"User-Agent": SYS_RANDOM.choice(user_agents)}
+    try:
+        async with session.get(url, headers=headers, timeout=15) as resp:
             resp.raise_for_status()
-            return resp
-        except Exception as e:
-            logging.debug(f"Attempt {attempt} failed for {url}: {e}")
-            if attempt < retries:
-                time.sleep(delay)
-                delay *= 2
-            else:
-                raise
+            return await resp.text()
+    except (aiohttp.ClientConnectorError, socket.gaierror) as e:
+        logging.warning(f"DNS/connection error fetching {url}: {e}")
+    except aiohttp.ClientResponseError as e:
+        logging.warning(f"HTTP error fetching {url}: {e.status} {e.message}")
+    except asyncio.TimeoutError:
+        logging.warning(f"Timeout fetching {url}")
+    except Exception as e:
+        logging.debug(f"Unexpected error fetching {url}: {e}")
+    return None
 
-# -------------------------
-# Crawler class
-# -------------------------
+
+async def fetch_crux_top_sites(session: aiohttp.ClientSession, count: int = 10000) -> List[str]:
+    logging.info("Fetching top sites from CrUX CSV...")
+    async with session.get(CRUX_TOP_CSV) as resp:
+        resp.raise_for_status()
+        data = await resp.read()
+    csv_text = gzip.decompress(data).decode()
+    reader = csv.DictReader(csv_text.splitlines())
+    sites = []
+    for row in reader:
+        site = row.get("origin")  # 'origin' column from CrUX CSV
+        if site and site not in sites:
+            if not site.startswith("http"):
+                site = f"https://{site}"
+            sites.append(site)
+        if len(sites) >= count:
+            break
+    logging.info(f"Fetched {len(sites)} top sites.")
+    return sites
+
+
 class Crawler:
-    class CrawlerTimedOut(Exception):
-        pass
+    def __init__(self, root_urls: List[str], min_sleep: float = 2.0, max_sleep: float = 5.0, max_retries: int = 2):
+        self.root_urls = root_urls
+        self.min_sleep = min_sleep
+        self.max_sleep = max_sleep
+        self.visited = set()
+        self.max_retries = max_retries
+        self.user_agents = [ua.get_random_user_agent() for _ in range(50)]  # Dynamic pool
 
-    def __init__(self, config: dict):
-        self._config = config
-        self._links: List[str] = []
-        self._start_time = None
+    async def fetch_and_parse(self, session: aiohttp.ClientSession, url: str) -> List[str]:
+        """Fetch a page and parse links, handling errors and sleeping randomly."""
+        retries = 0
+        while retries <= self.max_retries:
+            html = await fetch_text(session, url, self.user_agents)
+            if html:
+                break
+            retries += 1
+            await asyncio.sleep(SYS_RANDOM.uniform(self.min_sleep, self.max_sleep) * 2)  # backoff
+        if not html:
+            return []
 
-    def _request(self, url: str) -> requests.Response:
-        return request_with_retries(url)
+        self.visited.add(url)
+        logging.info(f"Visited: {url}")
 
-    def _normalize_link(self, link: str, root_url: str) -> Optional[str]:
-        try:
-            parsed = urlparse(link)
-        except ValueError:
-            return None
-        root_parsed = urlparse(root_url)
-        if link.startswith("//"):
-            return f"{root_parsed.scheme}://{parsed.netloc}{parsed.path}"
-        if not parsed.scheme:
-            return urljoin(root_url, link)
-        return link
+        soup = BeautifulSoup(html, "html.parser")
+        links = []
+        for a in soup.find_all("a", href=True):
+            link = a["href"].strip()
+            if link.startswith("//"):
+                link = f"https:{link}"
+            elif link.startswith("/"):
+                link = urljoin(url, link)
+            if link.startswith("http") and link not in self.visited:
+                links.append(link)
 
-    def _is_valid(self, url: str) -> bool:
-        regex = re.compile(
-            r"^(?:http|ftp)s?://"
-            r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+"
-            r"(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|"
-            r"\d{1,3}(?:\.\d{1,3}){3})"
-            r"(?::\d+)?(?:/?|[/?]\S+)$",
-            re.IGNORECASE
-        )
-        return re.match(regex, url) is not None
+        await asyncio.sleep(SYS_RANDOM.uniform(self.min_sleep, self.max_sleep))
+        return links
 
-    def _extract_urls(self, body: bytes, root_url: str) -> List[str]:
-        soup = BeautifulSoup(body, "html.parser")
-        hrefs = [a.get("href") for a in soup.find_all("a", href=True)]
-        norm = [self._normalize_link(h, root_url) for h in hrefs]
-        return [u for u in norm if u and self._is_valid(u) and u not in self._config.get("blacklisted_urls", [])]
+    async def crawl_root(self, session: aiohttp.ClientSession, url: str):
+        to_visit = [url]
+        while to_visit:
+            current = to_visit.pop(0)
+            new_links = await self.fetch_and_parse(session, current)
+            to_visit.extend(new_links)
 
-    def _browse_from_links(self, depth=0):
-        if not self._links or depth >= self._config.get("max_depth", 0):
-            logging.debug("Dead end or max depth reached")
-            return
-        if self._is_timeout_reached():
-            raise self.CrawlerTimedOut
+    async def run(self, threads: int = 5):
+        async with aiohttp.ClientSession() as session:
+            while True:
+                tasks = [self.crawl_root(session, url) for url in self.root_urls]
+                await asyncio.gather(*tasks)
 
-        link = SYS_RANDOM.choice(self._links)
-        try:
-            logging.info(f"Visiting {link}")
-            resp = self._request(link)
-            sub_links = self._extract_urls(resp.content, link)
-            time.sleep(SYS_RANDOM.uniform(self._config.get("min_sleep", 1), self._config.get("max_sleep", 2)))
 
-            if len(sub_links) > 1:
-                self._links = sub_links
-            else:
-                self._blacklist_link(link)
-        except Exception as e:
-            logging.warning(f"Error on {link}: {e}, blacklisting")
-            self._blacklist_link(link)
+async def main_async(args):
+    setup_logging(args.log, args.logfile)
+    async with aiohttp.ClientSession() as session:
+        top_sites = await fetch_crux_top_sites(session, count=10000)
 
-        self._browse_from_links(depth + 1)
+    crawler = Crawler(top_sites, min_sleep=args.min_sleep, max_sleep=args.max_sleep)
+    await crawler.run(threads=args.threads)
 
-    def _blacklist_link(self, link: str):
-        if link in self._links:
-            self._config.setdefault("blacklisted_urls", []).append(link)
-            self._links.remove(link)
 
-    def _is_timeout_reached(self) -> bool:
-        if not self._config.get("timeout"):
-            return False
-        return datetime.datetime.now() >= self._start_time + datetime.timedelta(seconds=self._config["timeout"])
-
-    def crawl(self):
-        self._start_time = datetime.datetime.now()
-        fail_count = 0
-        max_failures = 10
-
-        while fail_count < max_failures:
-            if self._is_timeout_reached():
-                logging.info("Crawler timeout exceeded")
-                return
-            root = SYS_RANDOM.choice(self._config["root_urls"])
-            try:
-                logging.info(f"Fetching root URL: {root}")
-                resp = self._request(root)
-                self._links = self._extract_urls(resp.content, root)
-                logging.debug(f"Found {len(self._links)} links")
-                self._browse_from_links()
-                fail_count = 0
-            except self.CrawlerTimedOut:
-                logging.info("Crawler timed out")
-                return
-            except Exception as e:
-                fail_count += 1
-                logging.warning(f"Error at root {root}: {e}")
-
-# -------------------------
-# Main entry
-# -------------------------
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--log", "-l", default="info", choices=["debug", "info", "warning", "error"])
     parser.add_argument("--logfile", help="Optional log file path")
-    parser.add_argument("--config", "-c", required=True)
-    parser.add_argument("--threads", "-n", type=int, default=2, help="Number of concurrent crawlers")
-    parser.add_argument("--timeout", "-t", type=int, default=None)
-    parser.add_argument("--min_sleep", type=int, default=None)
-    parser.add_argument("--max_sleep", type=int, default=None)
+    parser.add_argument("--threads", "-n", type=int, default=5, help="Number of concurrent crawlers")
+    parser.add_argument("--min_sleep", type=float, default=2.0, help="Minimum sleep between requests")
+    parser.add_argument("--max_sleep", type=float, default=5.0, help="Maximum sleep between requests")
     args = parser.parse_args()
+    asyncio.run(main_async(args))
 
-    setup_logging(args.log, args.logfile)
-
-    with open(args.config) as f:
-        cfg = json.load(f)
-
-    for key in ("timeout", "min_sleep", "max_sleep"):
-        if getattr(args, key) is not None:
-            cfg[key] = getattr(args, key)
-
-    # Run crawlers concurrently
-    with ThreadPoolExecutor(max_workers=args.threads) as exe:
-        futures = [exe.submit(Crawler(copy.deepcopy(cfg)).crawl) for _ in range(args.threads)]
-        for _ in as_completed(futures):
-            pass
 
 if __name__ == "__main__":
     main()
