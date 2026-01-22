@@ -3,7 +3,7 @@ ENV PATH="/app/venv/bin:$PATH"
 WORKDIR /app
 RUN python -m venv /app/venv
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt --user
+RUN pip install --no-cache-dir -r requirements.txt
 FROM cgr.dev/chainguard/python:latest@sha256:6252e33e2d954d5d4188e68c8268545baa5e05d47f62d9bec295e5cc063bd07f
 WORKDIR /app
 
