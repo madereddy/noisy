@@ -5,7 +5,7 @@ FROM cgr.dev/chainguard/python:latest-dev@sha256:42fdb3929d1c051cf648dec4d9d8451
 WORKDIR /app
 
 # Upgrade pip and install virtualenv
-RUN python -m pip install --upgrade pip setuptools wheel virtualenv
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel virtualenv
 
 # Copy requirements and install into a venv inside /app
 COPY requirements.txt .
