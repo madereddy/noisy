@@ -1,7 +1,7 @@
 # -------------------------
 # Builder stage
 # -------------------------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:698abbe8777bcc5b370c6c198c48a7aa86bd418c7234bbdae1fe06235cd121b8 AS builder
+FROM cgr.dev/chainguard/python:latest-dev@sha256:574e6e4294783a75a1247084290139c1f957ba100ef3388b1b8804d0c1f80239 AS builder
 WORKDIR /app
 
 # Upgrade pip and install virtualenv
