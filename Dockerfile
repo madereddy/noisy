@@ -20,7 +20,7 @@ COPY . .
 # -------------------------
 # Final runtime stage
 # -------------------------
-FROM cgr.dev/chainguard/python:latest@sha256:4953695b11dd5ac9a93ebab5f7ebe00f905a672a6c6149ba17f196e41f148a59
+FROM cgr.dev/chainguard/python:latest@sha256:968ae4081adaaef9dfc82fc8d418b094b6cbc7189798752d21871831319d61c8
 WORKDIR /app
 
 # Copy the virtual environment from the builder
