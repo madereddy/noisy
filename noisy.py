@@ -12,6 +12,8 @@ from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 
 import aiohttp
+from aiohttp import ClientError, ClientConnectorError, ClientResponseError
+from aiohttp.http_exceptions import LineTooLong
 from bs4 import BeautifulSoup
 from random_user_agent.user_agent import UserAgent
 from random_user_agent.params import SoftwareName, OperatingSystem
@@ -206,6 +208,22 @@ class QueueCrawler:
                     SYS_RANDOM.uniform(self.min_sleep, self.max_sleep)
                 )
                 return html
+
+            except (ClientError, LineTooLong, asyncio.TimeoutError, UnicodeDecodeError) as e:
+                # Specific handling for "expected" errors to reduce log noise
+                if isinstance(e, ClientResponseError) and e.status in (400, 403, 404, 405, 406, 429, 451):
+                    logging.info(f"Fetch failed {url}: {e.status} {e.message}")
+                elif isinstance(e, LineTooLong):
+                    logging.info(f"Fetch failed {url}: Line too long - {e}")
+                elif isinstance(e, ClientConnectorError):
+                    logging.info(f"Fetch failed {url}: Connection error - {e}")
+                elif isinstance(e, asyncio.TimeoutError):
+                    logging.info(f"Fetch failed {url}: Timeout")
+                elif isinstance(e, UnicodeDecodeError):
+                    logging.info(f"Fetch failed {url}: Encoding error - {e}")
+                else:
+                    logging.warning(f"Fetch failed {url}: {e}")
+                return None
 
             except Exception as e:
                 logging.warning(f"Fetch failed {url}: {e}")
