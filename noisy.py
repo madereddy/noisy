@@ -16,8 +16,6 @@ import aiohttp
 from aiohttp import ClientError, ClientConnectorError, ClientResponseError
 from aiohttp.http_exceptions import LineTooLong
 from bs4 import BeautifulSoup
-from random_user_agent.user_agent import UserAgent
-from random_user_agent.params import SoftwareName, OperatingSystem
 
 # ---- CRUX ----
 CRUX_TOP_CSV = "https://raw.githubusercontent.com/zakird/crux-top-lists/main/data/global/current.csv.gz"
@@ -50,26 +48,82 @@ SECONDS_PER_DAY = 24 * 60 * 60
 # ---- MISC ----
 SYS_RANDOM = random.SystemRandom()
 
-software_names = [
-    SoftwareName.CHROME.value,
-    SoftwareName.FIREFOX.value,
-    SoftwareName.EDGE.value,
+# Curated list of modern user agents (Chrome 120+, Firefox 120+, Safari 17+, Edge 120+)
+MODERN_USER_AGENTS = [
+    # --- Chrome (Windows) ---
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "software_name": "chrome",
+        "operating_system": "windows"
+    },
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "software_name": "chrome",
+        "operating_system": "windows"
+    },
+    # --- Chrome (macOS) ---
+    {
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "software_name": "chrome",
+        "operating_system": "macintosh"
+    },
+    {
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "software_name": "chrome",
+        "operating_system": "macintosh"
+    },
+    # --- Chrome (Linux) ---
+    {
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "software_name": "chrome",
+        "operating_system": "linux"
+    },
+    # --- Firefox (Windows) ---
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+        "software_name": "firefox",
+        "operating_system": "windows"
+    },
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+        "software_name": "firefox",
+        "operating_system": "windows"
+    },
+    # --- Firefox (macOS) ---
+    {
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:124.0) Gecko/20100101 Firefox/124.0",
+        "software_name": "firefox",
+        "operating_system": "macintosh"
+    },
+    # --- Firefox (Linux) ---
+    {
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0",
+        "software_name": "firefox",
+        "operating_system": "linux"
+    },
+    # --- Edge (Windows) ---
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0",
+        "software_name": "edge",
+        "operating_system": "windows"
+    },
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+        "software_name": "edge",
+        "operating_system": "windows"
+    },
+    # --- Safari (macOS) ---
+    {
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+        "software_name": "safari",
+        "operating_system": "macintosh"
+    },
+    {
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+        "software_name": "safari",
+        "operating_system": "macintosh"
+    },
 ]
-
-operating_systems = [
-    OperatingSystem.WINDOWS.value,
-    OperatingSystem.LINUX.value,
-    OperatingSystem.MACOS.value,
-]
-
-ua = UserAgent(
-    software_names=software_names,
-    operating_systems=operating_systems,
-    limit=100,
-)
-
-# Pre-fetch user agents for metadata access
-UA_LIST = ua.get_user_agents()
 
 def generate_headers(ua_data: dict) -> dict:
     headers = {
@@ -248,7 +302,7 @@ class QueueCrawler:
                 await self.wait_for_domain(domain)
 
                 # Pick random UA with metadata
-                ua_data = SYS_RANDOM.choice(UA_LIST)
+                ua_data = SYS_RANDOM.choice(MODERN_USER_AGENTS)
                 headers = generate_headers(ua_data)
 
                 if referer:
