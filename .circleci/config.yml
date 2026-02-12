@@ -38,39 +38,7 @@ jobs:
       - store_artifacts:
           path: test-reports
           destination: test-reports
-  build-test:
-    executor: docker-publisher
-    steps:
-      - checkout
-      - setup_remote_docker
-      - run:
-          name: Install Docker Buildx
-          command: |
-            DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
-            mkdir -p $DOCKER_CONFIG/cli-plugins
-            curl -SL "https://github.com/docker/buildx/releases/download/v0.16.2/buildx-v0.16.2.linux-amd64" -o $DOCKER_CONFIG/cli-plugins/docker-buildx
-            chmod a+x $DOCKER_CONFIG/cli-plugins/docker-buildx
-      - run:
-          name: Create and use new Buildx builder
-          command: |
-            docker buildx create --use
-      - run:
-          name: Build Docker image
-          command: |
-            docker build -t $IMAGE_NAME:test .
-      - run:
-          name: Test Docker image (amd64)
-          command: |
-            docker run --platform linux/amd64 $IMAGE_NAME:latest --timeout 20
-      - run:
-          name: Build and push multi-arch Docker image
-          command: |
-            echo "$AccessToken" | docker login -u "$Login" --password-stdin
-            docker buildx build --platform linux/amd64,linux/arm64 -t $IMAGE_NAME:test --push .
-      - store_artifacts:
-          path: test-reports
-          destination: test-reports
-          
+
 workflows:
   version: 2
   build-master:
@@ -79,7 +47,3 @@ workflows:
           filters:
             branches:
               only: master
-      - build-test:
-          filters:
-            branches:
-              only: test
