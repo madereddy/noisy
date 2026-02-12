@@ -48,6 +48,16 @@ SECONDS_PER_DAY = 24 * 60 * 60
 # ---- MISC ----
 SYS_RANDOM = random.SystemRandom()
 
+# Heuristic patterns for link filtering
+INTERESTING_PATTERNS = re.compile(
+    r"(article|blog|news|post|item|view|id=|product|category|forum|thread|story|page)",
+    re.IGNORECASE
+)
+BORING_PATTERNS = re.compile(
+    r"(login|signin|signup|register|account|cart|checkout|admin|api|auth|logout|password|recover|subscription|bill|invoice)",
+    re.IGNORECASE
+)
+
 # Curated list of modern user agents (Chrome 120+, Firefox 120+, Safari 17+, Edge 120+)
 MODERN_USER_AGENTS = [
     # --- Chrome (Windows) ---
@@ -427,8 +437,25 @@ class QueueCrawler:
                             link = f"https:{link}"
                         elif link.startswith("/"):
                             link = f"{url.rstrip('/')}{link}"
-                        if link.startswith("http"):
-                            await self.safe_enqueue(link, depth + 1, referer=url)
+
+                        if not link.startswith("http"):
+                            continue
+
+                        # Link Filtering Heuristics
+                        # 1. Skip boring/administrative links to avoid getting stuck in auth loops
+                        if BORING_PATTERNS.search(link):
+                            logging.debug(f"Skipping boring link: {link}")
+                            continue
+
+                        # 2. Prioritize interesting content (though with simple FIFO queue, this just adds it)
+                        # Ideally, a priority queue would be better, but this filter at least reduces junk.
+                        if INTERESTING_PATTERNS.search(link):
+                             logging.debug(f"Found interesting link: {link}")
+                             await self.safe_enqueue(link, depth + 1, referer=url)
+                        else:
+                             # 3. Enqueue neutral links normally
+                             await self.safe_enqueue(link, depth + 1, referer=url)
+
                 except Exception as e:
                     logging.warning(f"HTML parsing failed for {url}: {e}")
 
