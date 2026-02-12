@@ -9,10 +9,10 @@ import random
 import socket
 import time
 from typing import List, Optional, Tuple
-import re
 from urllib.parse import urlparse
 
 import aiohttp
+from bs4 import BeautifulSoup
 from random_user_agent.user_agent import UserAgent
 from random_user_agent.params import SoftwareName, OperatingSystem
 
@@ -64,8 +64,6 @@ ua = UserAgent(
     operating_systems=operating_systems,
     limit=100,
 )
-
-LINK_REGEX = re.compile(r'href=["\'](.*?)["\']', re.IGNORECASE)
 
 def setup_logging(log_level_str: str, logfile: Optional[str] = None):
     level = getattr(logging, log_level_str.upper(), logging.INFO)
@@ -124,6 +122,7 @@ class QueueCrawler:
         total_connections: int,
         connections_per_host: int,
         keepalive_timeout: int,
+        dns_ttl: int,
     ):
         self.queue: asyncio.Queue[Tuple[str, int]] = asyncio.Queue()
         self.root_urls = set(root_urls)
@@ -145,6 +144,7 @@ class QueueCrawler:
         self.total_connections = total_connections
         self.connections_per_host = connections_per_host
         self.keepalive_timeout = keepalive_timeout
+        self.dns_ttl = dns_ttl
 
         self.domain_last_access = {}
         self.domain_locks = {}
@@ -212,13 +212,18 @@ class QueueCrawler:
             self.queue.task_done()
 
             if html and depth < self.max_depth:
-                for link in LINK_REGEX.findall(html):
-                    if link.startswith("//"):
-                        link = f"https:{link}"
-                    elif link.startswith("/"):
-                        link = f"{url.rstrip('/')}{link}"
-                    if link.startswith("http"):
-                        await self.safe_enqueue(link, depth + 1)
+                try:
+                    soup = BeautifulSoup(html, "html.parser")
+                    for tag in soup.find_all("a", href=True):
+                        link = tag["href"]
+                        if link.startswith("//"):
+                            link = f"https:{link}"
+                        elif link.startswith("/"):
+                            link = f"{url.rstrip('/')}{link}"
+                        if link.startswith("http"):
+                            await self.safe_enqueue(link, depth + 1)
+                except Exception as e:
+                    logging.warning(f"HTML parsing failed for {url}: {e}")
 
     async def refresh_crux_sites(self):
         await asyncio.sleep(10)
@@ -246,7 +251,7 @@ class QueueCrawler:
         connector = aiohttp.TCPConnector(
             limit=self.total_connections,
             limit_per_host=self.connections_per_host,
-            ttl_dns_cache=DNS_CACHE_TTL,
+            ttl_dns_cache=self.dns_ttl,
             keepalive_timeout=self.keepalive_timeout,
         )
 
@@ -293,6 +298,7 @@ async def main_async(args):
         total_connections=args.total_connections,
         connections_per_host=args.connections_per_host,
         keepalive_timeout=args.keepalive_timeout,
+        dns_ttl=args.dns_ttl,
     )
 
     await crawler.run_forever(timeout=args.timeout)
@@ -317,6 +323,7 @@ def main():
                         default=DEFAULT_CONNECTIONS_PER_HOST)
     parser.add_argument("--keepalive_timeout", type=int,
                         default=DEFAULT_KEEPALIVE_TIMEOUT)
+    parser.add_argument("--dns_ttl", type=int, default=DNS_CACHE_TTL)
 
     parser.add_argument("--crux_refresh_days", type=float,
                         default=DEFAULT_CRUX_REFRESH_DAYS)
