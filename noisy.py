@@ -65,6 +65,17 @@ ua = UserAgent(
     limit=100,
 )
 
+DEFAULT_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+}
+
 def setup_logging(log_level_str: str, logfile: Optional[str] = None):
     level = getattr(logging, log_level_str.upper(), logging.INFO)
     root = logging.getLogger()
@@ -175,7 +186,8 @@ class QueueCrawler:
 
             try:
                 await self.wait_for_domain(domain)
-                headers = {"User-Agent": ua.get_random_user_agent()}
+                headers = DEFAULT_HEADERS.copy()
+                headers["User-Agent"] = ua.get_random_user_agent()
 
                 async with session.get(
                     url,
@@ -183,7 +195,7 @@ class QueueCrawler:
                     timeout=REQUEST_TIMEOUT,
                 ) as resp:
                     resp.raise_for_status()
-                    html = await resp.text()
+                    html = await resp.text(errors="replace")
 
                 self.visited_urls.add(url)
                 logging.info(f"Visited: {url}")
