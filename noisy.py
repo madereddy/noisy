@@ -135,10 +135,10 @@ class QueueCrawler:
         keepalive_timeout: int,
         dns_ttl: int,
     ):
-        self.queue: asyncio.Queue[Tuple[str, int]] = asyncio.Queue()
+        self.queue: asyncio.Queue[Tuple[str, int, Optional[str]]] = asyncio.Queue()
         self.root_urls = set(root_urls)
         for url in root_urls:
-            self.queue.put_nowait((url, 0))
+            self.queue.put_nowait((url, 0, None))
 
         self.visited_urls = set()
         self.semaphore = asyncio.Semaphore(concurrency)
@@ -160,10 +160,10 @@ class QueueCrawler:
         self.domain_last_access = {}
         self.domain_locks = {}
 
-    async def safe_enqueue(self, url: str, depth: int):
+    async def safe_enqueue(self, url: str, depth: int, referer: Optional[str] = None):
         if self.queue.qsize() >= self.max_queue_size:
             return
-        await self.queue.put((url, depth))
+        await self.queue.put((url, depth, referer))
 
     async def wait_for_domain(self, domain: str):
         lock = self.domain_locks.setdefault(domain, asyncio.Lock())
@@ -175,7 +175,7 @@ class QueueCrawler:
                 await asyncio.sleep(self.domain_delay - delta)
             self.domain_last_access[domain] = time.monotonic()
 
-    async def fetch(self, session: aiohttp.ClientSession, url: str):
+    async def fetch(self, session: aiohttp.ClientSession, url: str, referer: Optional[str] = None):
         async with self.semaphore:
             if url in self.visited_urls:
                 return None
@@ -188,6 +188,8 @@ class QueueCrawler:
                 await self.wait_for_domain(domain)
                 headers = DEFAULT_HEADERS.copy()
                 headers["User-Agent"] = ua.get_random_user_agent()
+                if referer:
+                    headers["Referer"] = referer
 
                 async with session.get(
                     url,
@@ -212,7 +214,7 @@ class QueueCrawler:
     async def crawl_worker(self, session: aiohttp.ClientSession):
         while not self.stop_event.is_set():
             try:
-                url, depth = await self.queue.get()
+                url, depth, referer = await self.queue.get()
             except asyncio.CancelledError:
                 break
 
@@ -220,7 +222,7 @@ class QueueCrawler:
                 self.queue.task_done()
                 continue
 
-            html = await self.fetch(session, url)
+            html = await self.fetch(session, url, referer)
             self.queue.task_done()
 
             if html and depth < self.max_depth:
@@ -233,7 +235,7 @@ class QueueCrawler:
                         elif link.startswith("/"):
                             link = f"{url.rstrip('/')}{link}"
                         if link.startswith("http"):
-                            await self.safe_enqueue(link, depth + 1)
+                            await self.safe_enqueue(link, depth + 1, referer=url)
                 except Exception as e:
                     logging.warning(f"HTML parsing failed for {url}: {e}")
 
@@ -246,7 +248,7 @@ class QueueCrawler:
                     for site in sites:
                         if site not in self.root_urls:
                             self.root_urls.add(site)
-                            await self.safe_enqueue(site, 0)
+                            await self.safe_enqueue(site, 0, None)
                     logging.info("CRUX refresh complete")
                 except Exception as e:
                     logging.error(f"CRUX refresh failed: {e}")
