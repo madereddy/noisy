@@ -125,6 +125,55 @@ MODERN_USER_AGENTS = [
     },
 ]
 
+UA_LIST_URL = "https://jnrbsn.github.io/user-agents/user-agents.json"
+_FETCHED_UAS = []
+
+async def fetch_user_agents(session: aiohttp.ClientSession) -> List[dict]:
+    """Fetches and parses a live list of user agents."""
+    logging.info(f"Fetching user agents from {UA_LIST_URL}...")
+    try:
+        async with session.get(UA_LIST_URL, timeout=10) as resp:
+            resp.raise_for_status()
+            uas = await resp.json()
+
+        parsed_uas = []
+        for ua_string in uas:
+            # Parse metadata roughly from string
+            software_name = "unknown"
+            os_name = "unknown"
+
+            if "Edg" in ua_string:
+                software_name = "edge"
+            elif "Chrome" in ua_string:
+                software_name = "chrome"
+            elif "Firefox" in ua_string:
+                software_name = "firefox"
+            elif "Safari" in ua_string:
+                software_name = "safari"
+
+            if "Windows" in ua_string:
+                os_name = "windows"
+            elif "Macintosh" in ua_string or "Mac OS" in ua_string:
+                os_name = "macintosh"
+            elif "Linux" in ua_string:
+                os_name = "linux"
+            elif "Android" in ua_string:
+                os_name = "android"
+            elif "iPhone" in ua_string or "iPad" in ua_string:
+                os_name = "ios"
+
+            parsed_uas.append({
+                "user_agent": ua_string,
+                "software_name": software_name,
+                "operating_system": os_name
+            })
+
+        logging.info(f"Loaded {len(parsed_uas)} user agents from remote source")
+        return parsed_uas
+    except Exception as e:
+        logging.warning(f"Failed to fetch user agents: {e}. Using fallback list.")
+        return MODERN_USER_AGENTS
+
 def generate_headers(ua_data: dict) -> dict:
     headers = {
         "Accept-Encoding": "gzip, deflate, br",
@@ -302,7 +351,8 @@ class QueueCrawler:
                 await self.wait_for_domain(domain)
 
                 # Pick random UA with metadata
-                ua_data = SYS_RANDOM.choice(MODERN_USER_AGENTS)
+                ua_list = _FETCHED_UAS if _FETCHED_UAS else MODERN_USER_AGENTS
+                ua_data = SYS_RANDOM.choice(ua_list)
                 headers = generate_headers(ua_data)
 
                 if referer:
@@ -441,7 +491,15 @@ async def main_async(args):
     crux_refresh_seconds = int(args.crux_refresh_days * SECONDS_PER_DAY)
 
     async with aiohttp.ClientSession() as session:
-        top_sites = await fetch_crux_top_sites(session)
+        # Fetch initial data concurrently
+        top_sites_task = asyncio.create_task(fetch_crux_top_sites(session))
+        ua_task = asyncio.create_task(fetch_user_agents(session))
+
+        top_sites, uas = await asyncio.gather(top_sites_task, ua_task)
+
+        global _FETCHED_UAS
+        if uas:
+            _FETCHED_UAS = uas
 
     crawler = QueueCrawler(
         root_urls=top_sites,
