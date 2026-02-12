@@ -6,6 +6,7 @@ import csv
 import gzip
 import logging
 import random
+import re
 import socket
 import time
 from typing import List, Optional, Tuple
@@ -67,16 +68,68 @@ ua = UserAgent(
     limit=100,
 )
 
-DEFAULT_HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-}
+# Pre-fetch user agents for metadata access
+UA_LIST = ua.get_user_agents()
+
+def generate_headers(ua_data: dict) -> dict:
+    headers = {
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "User-Agent": ua_data["user_agent"],
+    }
+
+    ua_string = ua_data["user_agent"]
+    software_name = ua_data["software_name"]
+    operating_system = ua_data["operating_system"]
+
+    # --- Chrome / Edge (Chromium) ---
+    if software_name in ("chrome", "edge", "chromium"):
+        # Version extraction
+        version_match = re.search(r"(?:Chrome|Edg|Chromium)/(\d+)", ua_string)
+        version = version_match.group(1) if version_match else "120"
+
+        # Brand list for Sec-CH-UA
+        brand_name = "Microsoft Edge" if software_name == "edge" else "Google Chrome"
+        headers["Sec-Ch-Ua"] = f'"Not_A Brand";v="8", "Chromium";v="{version}", "{brand_name}";v="{version}"'
+        headers["Sec-Ch-Ua-Mobile"] = "?0"
+
+        # Platform
+        platform_map = {
+            "windows": "Windows",
+            "linux": "Linux",
+            "mac-os-x": "macOS",
+            "macos": "macOS",
+        }
+        # random-user-agent OS names are lowercase usually
+        os_lower = operating_system.lower()
+        # Default to "Unknown" if not found, but we filter for Win/Linux/Mac so it should be fine.
+        # Check against partial matches if exact string differs
+        if "windows" in os_lower:
+            headers["Sec-Ch-Ua-Platform"] = '"Windows"'
+        elif "mac" in os_lower:
+            headers["Sec-Ch-Ua-Platform"] = '"macOS"'
+        elif "linux" in os_lower:
+            headers["Sec-Ch-Ua-Platform"] = '"Linux"'
+        else:
+             headers["Sec-Ch-Ua-Platform"] = '"Unknown"'
+
+        headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+
+    # --- Firefox ---
+    elif software_name == "firefox":
+        headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+        # Firefox doesn't typically send Sec-CH-UA headers by default (yet)
+
+    # --- Fallback ---
+    else:
+        headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+
+    return headers
 
 def setup_logging(log_level_str: str, logfile: Optional[str] = None):
     level = getattr(logging, log_level_str.upper(), logging.INFO)
@@ -193,8 +246,11 @@ class QueueCrawler:
 
             try:
                 await self.wait_for_domain(domain)
-                headers = DEFAULT_HEADERS.copy()
-                headers["User-Agent"] = ua.get_random_user_agent()
+
+                # Pick random UA with metadata
+                ua_data = SYS_RANDOM.choice(UA_LIST)
+                headers = generate_headers(ua_data)
+
                 if referer:
                     headers["Referer"] = referer
 
