@@ -161,6 +161,7 @@ class QueueCrawler:
 
         self.domain_last_access = {}
         self.domain_locks = {}
+        self.domain_penalties = {}
 
     async def safe_enqueue(self, url: str, depth: int, referer: Optional[str] = None):
         if self.queue.qsize() >= self.max_queue_size:
@@ -173,8 +174,12 @@ class QueueCrawler:
             now = time.monotonic()
             last = self.domain_last_access.get(domain, 0)
             delta = now - last
-            if delta < self.domain_delay:
-                await asyncio.sleep(self.domain_delay - delta)
+
+            penalty = self.domain_penalties.get(domain, 0)
+            wait_time = self.domain_delay + penalty
+
+            if delta < wait_time:
+                await asyncio.sleep(wait_time - delta)
             self.domain_last_access[domain] = time.monotonic()
 
     async def fetch(self, session: aiohttp.ClientSession, url: str, referer: Optional[str] = None):
@@ -201,6 +206,10 @@ class QueueCrawler:
                     resp.raise_for_status()
                     html = await resp.text(errors="replace")
 
+                # Success - clear any existing penalty for this domain
+                if domain in self.domain_penalties:
+                    del self.domain_penalties[domain]
+
                 self.visited_urls.add(url)
                 logging.info(f"Visited: {url}")
 
@@ -211,8 +220,14 @@ class QueueCrawler:
 
             except (ClientError, LineTooLong, asyncio.TimeoutError, UnicodeDecodeError) as e:
                 # Specific handling for "expected" errors to reduce log noise
-                if isinstance(e, ClientResponseError) and e.status in (400, 403, 404, 405, 406, 429, 451):
-                    logging.info(f"Fetch failed {url}: {e.status} {e.message}")
+                if isinstance(e, ClientResponseError):
+                    if 400 <= e.status < 500:
+                        logging.info(f"Fetch failed {url}: {e.status} {e.message}")
+                        # Apply penalty for 4xx errors to avoid bot detection
+                        current_penalty = self.domain_penalties.get(domain, 0)
+                        self.domain_penalties[domain] = current_penalty + 60.0
+                    else:
+                        logging.warning(f"Fetch failed {url}: {e}")
                 elif isinstance(e, LineTooLong):
                     logging.info(f"Fetch failed {url}: Line too long - {e}")
                 elif isinstance(e, ClientConnectorError):
