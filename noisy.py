@@ -13,7 +13,7 @@ from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 
 import aiohttp
-from aiohttp import ClientError, ClientConnectorError, ClientResponseError
+from aiohttp import ClientError, ClientConnectorError, ClientResponseError, ClientPayloadError
 from aiohttp.http_exceptions import LineTooLong
 from bs4 import BeautifulSoup
 
@@ -406,6 +406,8 @@ class QueueCrawler:
                     logging.info(f"Fetch failed {url}: Timeout")
                 elif isinstance(e, UnicodeDecodeError):
                     logging.info(f"Fetch failed {url}: Encoding error - {e}")
+                elif isinstance(e, ClientPayloadError):
+                     logging.info(f"Fetch failed {url}: Payload/Encoding error - {e}")
                 else:
                     logging.warning(f"Fetch failed {url}: {e}")
                 return None
