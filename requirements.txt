@@ -1,4 +1,4 @@
 aiohttp==3.13.3
 beautifulsoup4==4.14.3
-random-user-agent==1.0.1
 brotli==1.2.0
+zstandard==0.23.0

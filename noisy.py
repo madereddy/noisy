@@ -6,15 +6,16 @@ import csv
 import gzip
 import logging
 import random
+import re
 import socket
 import time
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 
 import aiohttp
+from aiohttp import ClientError, ClientConnectorError, ClientResponseError
+from aiohttp.http_exceptions import LineTooLong
 from bs4 import BeautifulSoup
-from random_user_agent.user_agent import UserAgent
-from random_user_agent.params import SoftwareName, OperatingSystem
 
 # ---- CRUX ----
 CRUX_TOP_CSV = "https://raw.githubusercontent.com/zakird/crux-top-lists/main/data/global/current.csv.gz"
@@ -47,34 +48,201 @@ SECONDS_PER_DAY = 24 * 60 * 60
 # ---- MISC ----
 SYS_RANDOM = random.SystemRandom()
 
-software_names = [
-    SoftwareName.CHROME.value,
-    SoftwareName.FIREFOX.value,
-    SoftwareName.EDGE.value,
-]
-
-operating_systems = [
-    OperatingSystem.WINDOWS.value,
-    OperatingSystem.LINUX.value,
-    OperatingSystem.MACOS.value,
-]
-
-ua = UserAgent(
-    software_names=software_names,
-    operating_systems=operating_systems,
-    limit=100,
+# Heuristic patterns for link filtering
+INTERESTING_PATTERNS = re.compile(
+    r"(article|blog|news|post|item|view|id=|product|category|forum|thread|story|page)",
+    re.IGNORECASE
+)
+BORING_PATTERNS = re.compile(
+    r"(login|signin|signup|register|account|cart|checkout|admin|api|auth|logout|password|recover|subscription|bill|invoice)",
+    re.IGNORECASE
 )
 
-DEFAULT_HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-}
+# Curated list of modern user agents (Chrome 120+, Firefox 120+, Safari 17+, Edge 120+)
+MODERN_USER_AGENTS = [
+    # --- Chrome (Windows) ---
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "software_name": "chrome",
+        "operating_system": "windows"
+    },
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "software_name": "chrome",
+        "operating_system": "windows"
+    },
+    # --- Chrome (macOS) ---
+    {
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "software_name": "chrome",
+        "operating_system": "macintosh"
+    },
+    {
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "software_name": "chrome",
+        "operating_system": "macintosh"
+    },
+    # --- Chrome (Linux) ---
+    {
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "software_name": "chrome",
+        "operating_system": "linux"
+    },
+    # --- Firefox (Windows) ---
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+        "software_name": "firefox",
+        "operating_system": "windows"
+    },
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+        "software_name": "firefox",
+        "operating_system": "windows"
+    },
+    # --- Firefox (macOS) ---
+    {
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:124.0) Gecko/20100101 Firefox/124.0",
+        "software_name": "firefox",
+        "operating_system": "macintosh"
+    },
+    # --- Firefox (Linux) ---
+    {
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0",
+        "software_name": "firefox",
+        "operating_system": "linux"
+    },
+    # --- Edge (Windows) ---
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0",
+        "software_name": "edge",
+        "operating_system": "windows"
+    },
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+        "software_name": "edge",
+        "operating_system": "windows"
+    },
+    # --- Safari (macOS) ---
+    {
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+        "software_name": "safari",
+        "operating_system": "macintosh"
+    },
+    {
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+        "software_name": "safari",
+        "operating_system": "macintosh"
+    },
+]
+
+UA_LIST_URL = "https://jnrbsn.github.io/user-agents/user-agents.json"
+_FETCHED_UAS = []
+
+async def fetch_user_agents(session: aiohttp.ClientSession) -> List[dict]:
+    """Fetches and parses a live list of user agents."""
+    logging.info(f"Fetching user agents from {UA_LIST_URL}...")
+    try:
+        async with session.get(UA_LIST_URL, timeout=10) as resp:
+            resp.raise_for_status()
+            uas = await resp.json()
+
+        parsed_uas = []
+        for ua_string in uas:
+            # Parse metadata roughly from string
+            software_name = "unknown"
+            os_name = "unknown"
+
+            if "Edg" in ua_string:
+                software_name = "edge"
+            elif "Chrome" in ua_string:
+                software_name = "chrome"
+            elif "Firefox" in ua_string:
+                software_name = "firefox"
+            elif "Safari" in ua_string:
+                software_name = "safari"
+
+            if "Windows" in ua_string:
+                os_name = "windows"
+            elif "Macintosh" in ua_string or "Mac OS" in ua_string:
+                os_name = "macintosh"
+            elif "Linux" in ua_string:
+                os_name = "linux"
+            elif "Android" in ua_string:
+                os_name = "android"
+            elif "iPhone" in ua_string or "iPad" in ua_string:
+                os_name = "ios"
+
+            parsed_uas.append({
+                "user_agent": ua_string,
+                "software_name": software_name,
+                "operating_system": os_name
+            })
+
+        logging.info(f"Loaded {len(parsed_uas)} user agents from remote source")
+        return parsed_uas
+    except Exception as e:
+        logging.warning(f"Failed to fetch user agents: {e}. Using fallback list.")
+        return MODERN_USER_AGENTS
+
+def generate_headers(ua_data: dict) -> dict:
+    headers = {
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "User-Agent": ua_data["user_agent"],
+    }
+
+    ua_string = ua_data["user_agent"]
+    software_name = ua_data["software_name"]
+    operating_system = ua_data["operating_system"]
+
+    # --- Chrome / Edge (Chromium) ---
+    if software_name in ("chrome", "edge", "chromium"):
+        # Version extraction
+        version_match = re.search(r"(?:Chrome|Edg|Chromium)/(\d+)", ua_string)
+        version = version_match.group(1) if version_match else "120"
+
+        # Brand list for Sec-CH-UA
+        brand_name = "Microsoft Edge" if software_name == "edge" else "Google Chrome"
+        headers["Sec-Ch-Ua"] = f'"Not_A Brand";v="8", "Chromium";v="{version}", "{brand_name}";v="{version}"'
+        headers["Sec-Ch-Ua-Mobile"] = "?0"
+
+        # Platform
+        platform_map = {
+            "windows": "Windows",
+            "linux": "Linux",
+            "mac-os-x": "macOS",
+            "macos": "macOS",
+        }
+        # random-user-agent OS names are lowercase usually
+        os_lower = operating_system.lower()
+        # Default to "Unknown" if not found, but we filter for Win/Linux/Mac so it should be fine.
+        # Check against partial matches if exact string differs
+        if "windows" in os_lower:
+            headers["Sec-Ch-Ua-Platform"] = '"Windows"'
+        elif "mac" in os_lower:
+            headers["Sec-Ch-Ua-Platform"] = '"macOS"'
+        elif "linux" in os_lower:
+            headers["Sec-Ch-Ua-Platform"] = '"Linux"'
+        else:
+             headers["Sec-Ch-Ua-Platform"] = '"Unknown"'
+
+        headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+
+    # --- Firefox ---
+    elif software_name == "firefox":
+        headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+        # Firefox doesn't typically send Sec-CH-UA headers by default (yet)
+
+    # --- Fallback ---
+    else:
+        headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+
+    return headers
 
 def setup_logging(log_level_str: str, logfile: Optional[str] = None):
     level = getattr(logging, log_level_str.upper(), logging.INFO)
@@ -159,6 +327,7 @@ class QueueCrawler:
 
         self.domain_last_access = {}
         self.domain_locks = {}
+        self.domain_penalties = {}
 
     async def safe_enqueue(self, url: str, depth: int, referer: Optional[str] = None):
         if self.queue.qsize() >= self.max_queue_size:
@@ -171,8 +340,12 @@ class QueueCrawler:
             now = time.monotonic()
             last = self.domain_last_access.get(domain, 0)
             delta = now - last
-            if delta < self.domain_delay:
-                await asyncio.sleep(self.domain_delay - delta)
+
+            penalty = self.domain_penalties.get(domain, 0)
+            wait_time = self.domain_delay + penalty
+
+            if delta < wait_time:
+                await asyncio.sleep(wait_time - delta)
             self.domain_last_access[domain] = time.monotonic()
 
     async def fetch(self, session: aiohttp.ClientSession, url: str, referer: Optional[str] = None):
@@ -186,8 +359,12 @@ class QueueCrawler:
 
             try:
                 await self.wait_for_domain(domain)
-                headers = DEFAULT_HEADERS.copy()
-                headers["User-Agent"] = ua.get_random_user_agent()
+
+                # Pick random UA with metadata
+                ua_list = _FETCHED_UAS if _FETCHED_UAS else MODERN_USER_AGENTS
+                ua_data = SYS_RANDOM.choice(ua_list)
+                headers = generate_headers(ua_data)
+
                 if referer:
                     headers["Referer"] = referer
 
@@ -199,6 +376,10 @@ class QueueCrawler:
                     resp.raise_for_status()
                     html = await resp.text(errors="replace")
 
+                # Success - clear any existing penalty for this domain
+                if domain in self.domain_penalties:
+                    del self.domain_penalties[domain]
+
                 self.visited_urls.add(url)
                 logging.info(f"Visited: {url}")
 
@@ -206,6 +387,28 @@ class QueueCrawler:
                     SYS_RANDOM.uniform(self.min_sleep, self.max_sleep)
                 )
                 return html
+
+            except (ClientError, LineTooLong, asyncio.TimeoutError, UnicodeDecodeError) as e:
+                # Specific handling for "expected" errors to reduce log noise
+                if isinstance(e, ClientResponseError):
+                    if 400 <= e.status < 500:
+                        logging.info(f"Fetch failed {url}: {e.status} {e.message}")
+                        # Apply penalty for 4xx errors to avoid bot detection
+                        current_penalty = self.domain_penalties.get(domain, 0)
+                        self.domain_penalties[domain] = current_penalty + 60.0
+                    else:
+                        logging.warning(f"Fetch failed {url}: {e}")
+                elif isinstance(e, LineTooLong):
+                    logging.info(f"Fetch failed {url}: Line too long - {e}")
+                elif isinstance(e, ClientConnectorError):
+                    logging.info(f"Fetch failed {url}: Connection error - {e}")
+                elif isinstance(e, asyncio.TimeoutError):
+                    logging.info(f"Fetch failed {url}: Timeout")
+                elif isinstance(e, UnicodeDecodeError):
+                    logging.info(f"Fetch failed {url}: Encoding error - {e}")
+                else:
+                    logging.warning(f"Fetch failed {url}: {e}")
+                return None
 
             except Exception as e:
                 logging.warning(f"Fetch failed {url}: {e}")
@@ -234,8 +437,25 @@ class QueueCrawler:
                             link = f"https:{link}"
                         elif link.startswith("/"):
                             link = f"{url.rstrip('/')}{link}"
-                        if link.startswith("http"):
-                            await self.safe_enqueue(link, depth + 1, referer=url)
+
+                        if not link.startswith("http"):
+                            continue
+
+                        # Link Filtering Heuristics
+                        # 1. Skip boring/administrative links to avoid getting stuck in auth loops
+                        if BORING_PATTERNS.search(link):
+                            logging.debug(f"Skipping boring link: {link}")
+                            continue
+
+                        # 2. Prioritize interesting content (though with simple FIFO queue, this just adds it)
+                        # Ideally, a priority queue would be better, but this filter at least reduces junk.
+                        if INTERESTING_PATTERNS.search(link):
+                             logging.debug(f"Found interesting link: {link}")
+                             await self.safe_enqueue(link, depth + 1, referer=url)
+                        else:
+                             # 3. Enqueue neutral links normally
+                             await self.safe_enqueue(link, depth + 1, referer=url)
+
                 except Exception as e:
                     logging.warning(f"HTML parsing failed for {url}: {e}")
 
@@ -298,7 +518,15 @@ async def main_async(args):
     crux_refresh_seconds = int(args.crux_refresh_days * SECONDS_PER_DAY)
 
     async with aiohttp.ClientSession() as session:
-        top_sites = await fetch_crux_top_sites(session)
+        # Fetch initial data concurrently
+        top_sites_task = asyncio.create_task(fetch_crux_top_sites(session))
+        ua_task = asyncio.create_task(fetch_user_agents(session))
+
+        top_sites, uas = await asyncio.gather(top_sites_task, ua_task)
+
+        global _FETCHED_UAS
+        if uas:
+            _FETCHED_UAS = uas
 
     crawler = QueueCrawler(
         root_urls=top_sites,
