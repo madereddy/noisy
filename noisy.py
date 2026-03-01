@@ -7,11 +7,12 @@ import gzip
 import logging
 import random
 import time
+from collections import OrderedDict
 from typing import List, Optional, Tuple
-import re
 from urllib.parse import urlparse, urljoin
 
 import aiohttp
+from bs4 import BeautifulSoup
 from random_user_agent.user_agent import UserAgent
 from random_user_agent.params import SoftwareName, OperatingSystem
 
@@ -38,10 +39,17 @@ DNS_CACHE_TTL = 300
 
 # ---- NETWORK ----
 REQUEST_TIMEOUT = 15
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024 
 
 # ---- RUNTIME ----
 DEFAULT_RUN_TIMEOUT_SECONDS = None  # None = run forever
 SECONDS_PER_DAY = 24 * 60 * 60
+
+# ---- VISITED URL CACHE ----
+DEFAULT_VISITED_MAX = 500_000
+
+# ---- DOMAIN CACHE ----
+DEFAULT_DOMAIN_CACHE_MAX = 50_000
 
 # ---- MISC ----
 SYS_RANDOM = random.SystemRandom()
@@ -64,7 +72,62 @@ ua = UserAgent(
     limit=100,
 )
 
-LINK_REGEX = re.compile(r'href=["\'](.*?)["\']', re.IGNORECASE)
+
+class LRUSet:
+    """A size-capped set that evicts the oldest entry when full."""
+
+    def __init__(self, maxsize: int):
+        self._data: OrderedDict = OrderedDict()
+        self._maxsize = maxsize
+
+    def __contains__(self, item) -> bool:
+        return item in self._data
+
+    def add(self, item):
+        if item in self._data:
+            self._data.move_to_end(item)
+            return
+        self._data[item] = None
+        if len(self._data) > self._maxsize:
+            self._data.popitem(last=False)  # evict oldest
+
+    def discard(self, item):
+        self._data.pop(item, None)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+
+class TTLDict:
+    """Dict that lazily evicts entries older than `ttl` seconds."""
+
+    def __init__(self, ttl: float, maxsize: int):
+        self._data: OrderedDict = OrderedDict()
+        self._times: dict = {}
+        self._ttl = ttl
+        self._maxsize = maxsize
+
+    def get(self, key, default=None):
+        self._maybe_evict(key)
+        return self._data.get(key, default)
+
+    def set(self, key, value):
+        now = time.monotonic()
+        self._data[key] = value
+        self._times[key] = now
+        self._data.move_to_end(key)
+        # Hard cap: evict oldest when over limit
+        while len(self._data) > self._maxsize:
+            oldest = next(iter(self._data))
+            del self._data[oldest]
+            del self._times[oldest]
+
+    def _maybe_evict(self, key):
+        if key in self._times:
+            if time.monotonic() - self._times[key] > self._ttl:
+                del self._data[key]
+                del self._times[key]
+
 
 def setup_logging(log_level_str: str, logfile: Optional[str] = None):
     level = getattr(logging, log_level_str.upper(), logging.INFO)
@@ -84,6 +147,7 @@ def setup_logging(log_level_str: str, logfile: Optional[str] = None):
 
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
 
+
 async def fetch_crux_top_sites(
     session: aiohttp.ClientSession,
     count: int = DEFAULT_CRUX_COUNT,
@@ -97,9 +161,11 @@ async def fetch_crux_top_sites(
     reader = csv.DictReader(csv_text.splitlines())
 
     sites = []
+    seen = set()
     for row in reader:
         origin = row.get("origin")
-        if origin and origin not in sites:
+        if origin and origin not in seen:
+            seen.add(origin)
             if not origin.startswith("http"):
                 origin = f"https://{origin}"
             sites.append(origin)
@@ -108,6 +174,22 @@ async def fetch_crux_top_sites(
 
     logging.info("Loaded %d CRUX sites", len(sites))
     return sites
+
+
+def extract_links(html: str, base_url: str) -> List[str]:
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Honour <base href="..."> if present
+    base_tag = soup.find("base", href=True)
+    effective_base = base_tag["href"] if base_tag else base_url
+
+    links = []
+    for tag in soup.find_all("a", href=True):
+        resolved = urljoin(effective_base, tag["href"])
+        if resolved.startswith("http"):
+            links.append(resolved)
+    return links
+
 
 class QueueCrawler:
     def __init__(
@@ -123,50 +205,70 @@ class QueueCrawler:
         total_connections: int,
         connections_per_host: int,
         keepalive_timeout: int,
+        visited_max: int = DEFAULT_VISITED_MAX,
+        domain_cache_max: int = DEFAULT_DOMAIN_CACHE_MAX,
     ):
-        self.queue: asyncio.Queue[Tuple[str, int]] = asyncio.Queue()
+        self.queue: asyncio.Queue[Tuple[str, int]] = asyncio.Queue(
+            maxsize=max_queue_size
+        )
         self.root_urls = set(root_urls)
         for url in root_urls:
-            self.queue.put_nowait((url, 0))
+            try:
+                self.queue.put_nowait((url, 0))
+            except asyncio.QueueFull:
+                break
 
-        self.visited_urls: set = set()
+        self.visited_urls: LRUSet = LRUSet(maxsize=visited_max)
         self._visited_lock = asyncio.Lock()
 
         self.semaphore = asyncio.Semaphore(concurrency)
         self.stop_event = asyncio.Event()
-
         self.concurrency = concurrency
+
         self.max_depth = max_depth
         self.min_sleep = min_sleep
         self.max_sleep = max_sleep
-
         self.crux_refresh_seconds = crux_refresh_seconds
-        self.max_queue_size = max_queue_size
         self.domain_delay = domain_delay
 
         self.total_connections = total_connections
         self.connections_per_host = connections_per_host
         self.keepalive_timeout = keepalive_timeout
 
-        self.domain_last_access = {}
-        self.domain_locks = {}
+        self.domain_last_access: TTLDict = TTLDict(
+            ttl=domain_delay * 10,
+            maxsize=domain_cache_max,
+        )
+        self.domain_locks: OrderedDict = OrderedDict()
+        self._domain_locks_max = domain_cache_max
 
     async def safe_enqueue(self, url: str, depth: int):
-        if self.queue.qsize() >= self.max_queue_size:
-            return
-        await self.queue.put((url, depth))
+        try:
+            self.queue.put_nowait((url, depth))
+        except asyncio.QueueFull:
+            pass
+
+    def _get_domain_lock(self, domain: str) -> asyncio.Lock:
+        """Return (and LRU-manage) a per-domain asyncio.Lock."""
+        if domain in self.domain_locks:
+            self.domain_locks.move_to_end(domain)
+        else:
+            self.domain_locks[domain] = asyncio.Lock()
+            if len(self.domain_locks) > self._domain_locks_max:
+                self.domain_locks.popitem(last=False)
+        return self.domain_locks[domain]
 
     async def wait_for_domain(self, domain: str):
-        lock = self.domain_locks.setdefault(domain, asyncio.Lock())
+        lock = self._get_domain_lock(domain)
         async with lock:
             now = time.monotonic()
             last = self.domain_last_access.get(domain, 0)
             delta = now - last
             if delta < self.domain_delay:
                 await asyncio.sleep(self.domain_delay - delta)
-            self.domain_last_access[domain] = time.monotonic()
+            self.domain_last_access.set(domain, time.monotonic())
 
-    async def fetch(self, session: aiohttp.ClientSession, url: str):
+    async def fetch(self, session: aiohttp.ClientSession, url: str) -> Optional[str]:
         async with self.semaphore:
             async with self._visited_lock:
                 if url in self.visited_urls:
@@ -188,7 +290,8 @@ class QueueCrawler:
                     timeout=timeout,
                 ) as resp:
                     resp.raise_for_status()
-                    html = await resp.text()
+                    raw = await resp.content.read(MAX_RESPONSE_BYTES)
+                    html = raw.decode(resp.charset or "utf-8", errors="replace")
 
                 logging.info("Visited: %s", url)
 
@@ -216,26 +319,23 @@ class QueueCrawler:
             self.queue.task_done()
 
             if html and depth < self.max_depth:
-                for link in LINK_REGEX.findall(html):
-                    resolved = urljoin(url, link)
-                    if resolved.startswith("http"):
-                        await self.safe_enqueue(resolved, depth + 1)
+                for link in extract_links(html, url):
+                    await self.safe_enqueue(link, depth + 1)
 
-    async def refresh_crux_sites(self):
+    async def refresh_crux_sites(self, session: aiohttp.ClientSession):
         await asyncio.sleep(10)
-        async with aiohttp.ClientSession() as session:
-            while not self.stop_event.is_set():
-                try:
-                    sites = await fetch_crux_top_sites(session)
-                    for site in sites:
-                        if site not in self.root_urls:
-                            self.root_urls.add(site)
-                            await self.safe_enqueue(site, 0)
-                    logging.info("CRUX refresh complete")
-                except Exception as e:
-                    logging.error("CRUX refresh failed: %s", e)
+        while not self.stop_event.is_set():
+            try:
+                sites = await fetch_crux_top_sites(session)
+                for site in sites:
+                    if site not in self.root_urls:
+                        self.root_urls.add(site)
+                        await self.safe_enqueue(site, 0)
+                logging.info("CRUX refresh complete")
+            except Exception as e:
+                logging.error("CRUX refresh failed: %s", e)
 
-                await asyncio.sleep(self.crux_refresh_seconds)
+            await asyncio.sleep(self.crux_refresh_seconds)
 
     async def stop_after_timeout(self, timeout: int):
         logging.info("Crawler will stop after %d seconds", timeout)
@@ -255,7 +355,7 @@ class QueueCrawler:
         async with aiohttp.ClientSession(connector=connector) as session:
             tasks = []
 
-            tasks.append(asyncio.create_task(self.refresh_crux_sites()))
+            tasks.append(asyncio.create_task(self.refresh_crux_sites(session)))
 
             if timeout:
                 tasks.append(asyncio.create_task(self.stop_after_timeout(timeout)))
@@ -299,6 +399,7 @@ async def main_async(args):
 
     await crawler.run_forever(timeout=args.timeout)
 
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -336,6 +437,7 @@ def main():
         asyncio.run(main_async(args))
     except KeyboardInterrupt:
         logging.info("Interrupted — exiting cleanly")
+
 
 if __name__ == "__main__":
     main()
