@@ -9,7 +9,7 @@ import random
 import time
 from collections import OrderedDict
 from typing import List, Optional, Tuple
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlsplit, urljoin
 
 import aiohttp
 import ssl
@@ -74,13 +74,21 @@ ua = UserAgent(
     limit=100,
 )
 
-# Browser-realistic Accept headers rotated per request to reduce 403s.
-# Real browsers always send these; requests that omit them are easy bot signals.
+try:
+    import brotli as _brotli
+    _BR_SUPPORTED = True
+except ImportError:
+    _BR_SUPPORTED = False
+
+_ENCODING_WITH_BR = "gzip, deflate, br"
+_ENCODING_WITHOUT_BR = "gzip, deflate"
+_ACCEPT_ENCODING = _ENCODING_WITH_BR if _BR_SUPPORTED else _ENCODING_WITHOUT_BR
+
 ACCEPT_HEADERS_POOL = [
     {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": _ACCEPT_ENCODING,
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
         "Upgrade-Insecure-Requests": "1",
@@ -88,14 +96,14 @@ ACCEPT_HEADERS_POOL = [
     {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-GB,en;q=0.8,en-US;q=0.6",
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": _ACCEPT_ENCODING,
         "Cache-Control": "max-age=0",
         "Upgrade-Insecure-Requests": "1",
     },
     {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": _ACCEPT_ENCODING,
         "Upgrade-Insecure-Requests": "1",
     },
 ]
@@ -230,6 +238,7 @@ def extract_links(html: str, base_url: str) -> List[str]:
 
 
 class QueueCrawler:
+
     def __init__(
         self,
         root_urls: List[str],
@@ -313,7 +322,10 @@ class QueueCrawler:
                     return None
                 self.visited_urls.add(url)
 
-            domain = urlparse(url).hostname
+            try:
+                domain = urlsplit(url).hostname
+            except ValueError:
+                domain = None
             if not domain:
                 return None
 
@@ -338,7 +350,7 @@ class QueueCrawler:
 
             except aiohttp.ClientSSLError as e:
                 async with self._visited_lock:
-                    pass
+                    pass  # leave in visited so we don't keep retrying
                 logging.debug("SSL error skipping %s: %s", url, e)
                 return None
 
@@ -492,3 +504,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
