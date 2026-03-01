@@ -12,6 +12,7 @@ from typing import List, Optional, Tuple
 from urllib.parse import urlparse, urljoin
 
 import aiohttp
+import ssl
 from bs4 import BeautifulSoup
 from random_user_agent.user_agent import UserAgent
 from random_user_agent.params import SoftwareName, OperatingSystem
@@ -39,7 +40,8 @@ DNS_CACHE_TTL = 300
 
 # ---- NETWORK ----
 REQUEST_TIMEOUT = 15
-MAX_RESPONSE_BYTES = 2 * 1024 * 1024 
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_HEADER_SIZE = 32 * 1024
 
 # ---- RUNTIME ----
 DEFAULT_RUN_TIMEOUT_SECONDS = None  # None = run forever
@@ -72,6 +74,43 @@ ua = UserAgent(
     limit=100,
 )
 
+# Browser-realistic Accept headers rotated per request to reduce 403s.
+# Real browsers always send these; requests that omit them are easy bot signals.
+ACCEPT_HEADERS_POOL = [
+    {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-GB,en;q=0.8,en-US;q=0.6",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "max-age=0",
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Upgrade-Insecure-Requests": "1",
+    },
+]
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """
+    Return an SSL context that tolerates legacy renegotiation (fixes the
+    UNSAFE_LEGACY_RENEGOTIATION_DISABLED error seen on some hosts), while
+    still verifying certificates for all other sites.
+    """
+    ctx = ssl.create_default_context()
+    ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0)
+    return ctx
+
+SSL_CONTEXT = _build_ssl_context()
 
 class LRUSet:
     """A size-capped set that evicts the oldest entry when full."""
@@ -96,7 +135,6 @@ class LRUSet:
 
     def __len__(self) -> int:
         return len(self._data)
-
 
 class TTLDict:
     """Dict that lazily evicts entries older than `ttl` seconds."""
@@ -281,19 +319,28 @@ class QueueCrawler:
 
             try:
                 await self.wait_for_domain(domain)
-                headers = {"User-Agent": ua.get_random_user_agent()}
+                accept_headers = SYS_RANDOM.choice(ACCEPT_HEADERS_POOL)
+                headers = {"User-Agent": ua.get_random_user_agent(), **accept_headers}
                 timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
 
                 async with session.get(
                     url,
                     headers=headers,
                     timeout=timeout,
+                    ssl=SSL_CONTEXT,
+                    allow_redirects=True,
                 ) as resp:
                     resp.raise_for_status()
                     raw = await resp.content.read(MAX_RESPONSE_BYTES)
                     html = raw.decode(resp.charset or "utf-8", errors="replace")
 
                 logging.info("Visited: %s", url)
+
+            except aiohttp.ClientSSLError as e:
+                async with self._visited_lock:
+                    pass
+                logging.debug("SSL error skipping %s: %s", url, e)
+                return None
 
             except Exception as e:
                 async with self._visited_lock:
@@ -352,7 +399,11 @@ class QueueCrawler:
             keepalive_timeout=self.keepalive_timeout,
         )
 
-        async with aiohttp.ClientSession(connector=connector) as session:
+        async with aiohttp.ClientSession(
+            connector=connector,
+            max_line_size=MAX_HEADER_SIZE,
+            max_field_size=MAX_HEADER_SIZE,
+        ) as session:
             tasks = []
 
             tasks.append(asyncio.create_task(self.refresh_crux_sites(session)))
