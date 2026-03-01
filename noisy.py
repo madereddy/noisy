@@ -80,7 +80,7 @@ try:
 except ImportError:
     _BR_SUPPORTED = False
 
-_ENCODING_WITH_BR    = "gzip, deflate, br"
+_ENCODING_WITH_BR = "gzip, deflate, br"
 _ENCODING_WITHOUT_BR = "gzip, deflate"
 _ACCEPT_ENCODING = _ENCODING_WITH_BR if _BR_SUPPORTED else _ENCODING_WITHOUT_BR
 
@@ -501,3 +501,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
