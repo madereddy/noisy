@@ -9,7 +9,7 @@ import random
 import time
 from collections import OrderedDict
 from typing import List, Optional, Tuple
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlsplit, urljoin
 
 import aiohttp
 import ssl
@@ -322,7 +322,10 @@ class QueueCrawler:
                     return None
                 self.visited_urls.add(url)
 
-            domain = urlparse(url).hostname
+            try:
+                domain = urlsplit(url).hostname
+            except ValueError:
+                domain = None
             if not domain:
                 return None
 
@@ -501,4 +504,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
