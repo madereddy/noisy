@@ -42,7 +42,6 @@ pip install -r requirements.txt
 
 ```
 aiohttp==3.13.3
-beautifulsoup4==4.14.3
 Brotli>=1.1.0
 ```
 
@@ -54,7 +53,7 @@ Run the crawler directly:
 python noisy.py
 ```
 
-All arguments are optional — the crawler fetches its own seed list and UA pool at startup.
+All arguments are optional - the crawler fetches its own seed list and UA pool at startup.
 
 ```
 $ python noisy.py --help
@@ -100,18 +99,18 @@ INFO - Fetching CRUX top sites...
 INFO - Loaded 10000 CRUX sites
 INFO - Fetching user agents from useragents.me...
 INFO - Loaded 50 user agents
-INFO - Visited: https://www.google.com
-INFO - Visited: https://www.wikipedia.org
+DEBUG - Visited: https://www.google.com
+DEBUG - Visited: https://www.wikipedia.org
 WARNING - Fetch failed https://example.com: 403, message='Forbidden'
-INFO - Visited: https://www.reddit.com
+DEBUG - Visited: https://www.reddit.com
 INFO - UA pool refreshed (50 agents)
 INFO - CRUX refresh complete
 ```
 
 Log levels:
-- `INFO` — visited URLs and background refresh events
+- `INFO` — background refresh events
 - `WARNING` — fetch errors (403s, timeouts, connection failures)
-- `DEBUG` — internal aiohttp request detail
+- `DEBUG` — visited URLs and internal aiohttp request detail
 
 ---
 
