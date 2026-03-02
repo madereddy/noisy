@@ -117,6 +117,7 @@ _UA_FALLBACK = [
     "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
 ]
 
+
 # Fresh UA list
 class UAPool:
 
@@ -174,8 +175,16 @@ async def fetch_user_agents(
         logging.info("Loaded %d user agents", len(agents))
         return agents
 
-    except Exception as e:
+    except (
+        aiohttp.ClientError,
+        asyncio.TimeoutError,
+        ssl.SSLError,
+    ) as e:
         logging.warning("UA fetch failed, keeping existing pool: %s", e)
+        return []
+
+    except Exception:
+        logging.exception("Unexpected failure while fetching user agents")
         return []
 
 
@@ -200,8 +209,10 @@ def extract_links(html: str, base_url: str) -> Iterator[str]:
     parser = LinkExtractor(base_url)
     try:
         parser.feed(html)
+    except (ValueError, RuntimeError) as e:
+        logging.debug("HTML parsing issue at %s: %s", base_url, e)
     except Exception:
-        pass
+        logging.exception("Unexpected parser failure at %s", base_url)
     return iter(parser.links)
 
 
@@ -433,10 +444,20 @@ class QueueCrawler:
                 logging.debug("SSL error skipping %s: %s", url, e)
                 return None
 
-            except Exception as e:
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                ssl.SSLError,
+            ) as e:
                 async with self._visited_lock:
                     self.visited_urls.discard(url)
                 logging.debug("Fetch failed %s: %s", url, e)
+                return None
+
+            except Exception:
+                async with self._visited_lock:
+                    self.visited_urls.discard(url)
+                logging.exception("Unexpected error fetching %s", url)
                 return None
 
     async def crawl_worker(self, session: aiohttp.ClientSession):
@@ -469,8 +490,15 @@ class QueueCrawler:
                         self.root_urls.add(site)
                         self.safe_enqueue(site, 0)
                 logging.info("CRUX refresh complete")
-            except Exception as e:
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                ssl.SSLError,
+            ) as e:
                 logging.error("CRUX refresh failed: %s", e)
+
+            except Exception:
+                logging.exception("Unexpected error during CRUX refresh")
             await asyncio.sleep(self.crux_refresh_seconds)
 
     async def refresh_user_agents(self, session: aiohttp.ClientSession):
