@@ -1,8 +1,18 @@
-#folders
-.github
+#Folders
+.idea/
+.vscode/
+venv/
+.venv/
+__pycache__/
 
-#files
-.idea
-.DS_Store
+#Artifacts
 *.pyc
-*.md
+*.pyo
+*.pyd
+
+#Logs
+*.log
+
+#OS
+.DS_Store
+Thumbs.db
