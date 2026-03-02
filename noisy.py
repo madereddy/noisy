@@ -361,6 +361,8 @@ class QueueCrawler:
         self.domain_locks: OrderedDict = OrderedDict()
         self._domain_locks_max = domain_cache_max
         self.stats = {"visited": 0, "failed": 0, "queued": 0}
+        self.failed_counts: dict[str, int] = {}
+        self.max_failures = 3
 
     async def report_stats(self):
         while not self.stop_event.is_set():
@@ -450,15 +452,28 @@ class QueueCrawler:
                     for root_url in self.root_urls:
                         self.safe_enqueue(root_url, 0)
 
+                self.failed_counts.pop(url, None)
+
                 return links
 
             except (aiohttp.ClientError, asyncio.TimeoutError, ssl.SSLError):
                 self.visited_urls.discard(url)
                 self.stats["failed"] += 1
-                return None
+                self.failed_counts[url] = self.failed_counts.get(url, 0) + 1
+                if self.failed_counts[url] >= self.max_failures:
+                    self.failed_counts.pop(url, None)
+                    if url in self.root_urls:
+                        self.root_urls.discard(url)
+                    logging.info("Removing %s from root list after %d failures", url, self.max_failures)
             except Exception:
                 self.visited_urls.discard(url)
                 logging.exception("Unexpected error fetching %s", url)
+                self.failed_counts[url] = self.failed_counts.get(url, 0) + 1
+                if self.failed_counts[url] >= self.max_failures:
+                    self.failed_counts.pop(url, None)
+                    if url in self.root_urls:
+                        self.root_urls.discard(url)
+                    logging.info("Removing %s from root list after %d failures", url, self.max_failures)
                 return None
 
     async def crawl_worker(self, session: aiohttp.ClientSession):
@@ -634,3 +649,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
