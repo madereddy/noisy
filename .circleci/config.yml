@@ -61,7 +61,7 @@ jobs:
       - run:
           name: Test Docker image (amd64)
           command: |
-            docker run --platform linux/amd64 $IMAGE_NAME:latest --timeout 20
+            docker run --platform linux/amd64 $IMAGE_NAME:test --timeout 20
       - run:
           name: Build and push multi-arch Docker image
           command: |
