@@ -1,4 +1,4 @@
-# noisy.py - queue-based forever crawler
+# noisy.py - queue-based forever crawler (human-like improvements)
 
 import argparse
 import asyncio
@@ -120,7 +120,6 @@ _UA_FALLBACK = [
 
 # Fresh UA list
 class UAPool:
-
     def __init__(self, initial: List[str]):
         self._pool: List[str] = list(initial)
         self._lock = asyncio.Lock()
@@ -151,7 +150,9 @@ async def fetch_user_agents(
             ssl=SSL_CONTEXT,
             headers={"User-Agent": SYS_RANDOM.choice(_UA_FALLBACK)},
         ) as resp:
-            resp.raise_for_status()
+            if resp.status >= 400:
+                logging.warning("UA source returned %s", resp.status)
+                return []
             raw = await resp.content.read(MAX_RESPONSE_BYTES)
             text = raw.decode(resp.charset or "utf-8", errors="replace")
 
@@ -189,7 +190,6 @@ async def fetch_user_agents(
 
 
 class LinkExtractor(HTMLParser):
-
     def __init__(self, base_url: str):
         super().__init__()
         self.base_url = base_url
@@ -208,6 +208,8 @@ class LinkExtractor(HTMLParser):
 def extract_links(html: str, base_url: str) -> Iterator[str]:
     parser = LinkExtractor(base_url)
     try:
+        # simulate partial reading before extracting links
+        time.sleep(SYS_RANDOM.uniform(0.5, 2.0))
         parser.feed(html)
     except (ValueError, RuntimeError) as e:
         logging.debug("HTML parsing issue at %s: %s", base_url, e)
@@ -274,42 +276,35 @@ class TTLDict:
 def setup_logging(log_level_str: str, logfile: Optional[str] = None):
     level = getattr(logging, log_level_str.upper(), logging.INFO)
     root = logging.getLogger()
-
     root.handlers.clear()
     root.setLevel(level)
-
     formatter = logging.Formatter("%(levelname)s - %(message)s")
-
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(formatter)
     root.addHandler(stream_handler)
-
     if logfile:
         file_handler = logging.FileHandler(logfile)
         file_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         )
         root.addHandler(file_handler)
-
     logging.getLogger("aiohttp").setLevel(
         logging.DEBUG if level == logging.DEBUG else logging.ERROR
     )
 
 
 async def fetch_crux_top_sites(
-    session: aiohttp.ClientSession,
-    count: int = DEFAULT_CRUX_COUNT,
+    session: aiohttp.ClientSession, count: int = DEFAULT_CRUX_COUNT
 ) -> List[str]:
     logging.info("Fetching CRUX top sites...")
     async with session.get(CRUX_TOP_CSV) as resp:
-        resp.raise_for_status()
+        if resp.status >= 400:
+            logging.error("CRUX fetch failed with status %s", resp.status)
+            return []
         data = await resp.read()
-
     csv_text = gzip.decompress(data).decode()
     reader = csv.DictReader(csv_text.splitlines())
-
-    sites = []
-    seen = set()
+    sites, seen = [], set()
     for row in reader:
         origin = row.get("origin")
         if origin and origin not in seen:
@@ -319,13 +314,11 @@ async def fetch_crux_top_sites(
             sites.append(origin)
         if len(sites) >= count:
             break
-
     logging.info("Loaded %d CRUX sites", len(sites))
     return sites
 
 
 class QueueCrawler:
-
     def __init__(
         self,
         root_urls: List[str],
@@ -350,37 +343,43 @@ class QueueCrawler:
                 self.queue.put_nowait((url, 0))
             except asyncio.QueueFull:
                 break
-
         self.visited_urls: LRUSet = LRUSet(maxsize=visited_max)
-        self._visited_lock = asyncio.Lock()
-
         self.semaphore = asyncio.Semaphore(concurrency)
         self.stop_event = asyncio.Event()
         self.concurrency = concurrency
-
         self.max_depth = max_depth
         self.min_sleep = min_sleep
         self.max_sleep = max_sleep
         self.crux_refresh_seconds = crux_refresh_seconds
         self.ua_refresh_seconds = ua_refresh_seconds
         self.domain_delay = domain_delay
-
         self.total_connections = total_connections
         self.connections_per_host = connections_per_host
         self.keepalive_timeout = keepalive_timeout
-
         self.domain_last_access: TTLDict = TTLDict(
-            ttl=domain_delay * 10,
-            maxsize=domain_cache_max,
+            ttl=domain_delay * 10, maxsize=domain_cache_max
         )
         self.domain_locks: OrderedDict = OrderedDict()
         self._domain_locks_max = domain_cache_max
+        self.stats = {"visited": 0, "failed": 0, "queued": 0}
+
+    async def report_stats(self):
+        while not self.stop_event.is_set():
+            await asyncio.sleep(60)
+            logging.info(
+                "Stats | visited=%d failed=%d queued=%d queue_size=%d",
+                self.stats["visited"],
+                self.stats["failed"],
+                self.stats["queued"],
+                self.queue.qsize(),
+            )
 
     def safe_enqueue(self, url: str, depth: int):
         try:
             self.queue.put_nowait((url, depth))
+            self.stats["queued"] += 1
         except asyncio.QueueFull:
-            pass
+            logging.debug("Queue full, dropping %s", url)
 
     def _get_domain_lock(self, domain: str) -> asyncio.Lock:
         if domain in self.domain_locks:
@@ -397,18 +396,14 @@ class QueueCrawler:
             now = time.monotonic()
             last = self.domain_last_access.get(domain, 0)
             delta = now - last
-            if delta < self.domain_delay:
-                await asyncio.sleep(self.domain_delay - delta)
+            wait_time = max(0, self.domain_delay * SYS_RANDOM.uniform(0.8, 1.2) - delta)
+            if wait_time > 0:
+                await asyncio.sleep(wait_time)
             self.domain_last_access.set(domain, time.monotonic())
 
     async def fetch(
-        self, session: aiohttp.ClientSession, url: str
+        self, session: aiohttp.ClientSession, url: str, depth: int
     ) -> Optional[List[str]]:
-        async with self._visited_lock:
-            if url in self.visited_urls:
-                return None
-            self.visited_urls.add(url)
-
         async with self.semaphore:
             try:
                 domain = urlsplit(url).hostname
@@ -416,14 +411,15 @@ class QueueCrawler:
                 domain = None
             if not domain:
                 return None
-
+            if url in self.visited_urls:
+                return None
+            self.visited_urls.add(url)
             try:
                 await self.wait_for_domain(domain)
-
-                accept_headers = SYS_RANDOM.choice(ACCEPT_HEADERS_POOL)
-                headers = {"User-Agent": ua_pool.get_random(), **accept_headers}
+                headers = SYS_RANDOM.choice(ACCEPT_HEADERS_POOL).copy()
+                if SYS_RANDOM.random() < 0.7:
+                    headers["User-Agent"] = ua_pool.get_random()
                 timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
-
                 async with session.get(
                     url,
                     headers=headers,
@@ -431,32 +427,31 @@ class QueueCrawler:
                     ssl=SSL_CONTEXT,
                     allow_redirects=True,
                 ) as resp:
-                    resp.raise_for_status()
+                    if 500 <= resp.status or 400 <= resp.status:
+                        self.stats["failed"] += 1
+                        return None
                     raw = await resp.content.read(MAX_RESPONSE_BYTES)
                     html = raw.decode(resp.charset or "utf-8", errors="replace")
-
-                logging.debug("Visited: %s", url)
-
+                self.stats["visited"] += 1
+                # simulate reading delay based on depth
+                await asyncio.sleep(
+                    SYS_RANDOM.uniform(self.min_sleep, self.max_sleep)
+                    * (1 + depth * 0.3)
+                    * SYS_RANDOM.uniform(0.8, 1.5)
+                )
                 links = list(extract_links(html, url))
+                SYS_RANDOM.shuffle(links)  # shuffle links for human-like behavior
+                # occasional backtracking to root pages
+                if SYS_RANDOM.random() < 0.05:
+                    for root_url in self.root_urls:
+                        self.safe_enqueue(root_url, 0)
                 return links
-
-            except aiohttp.ClientSSLError as e:
-                logging.debug("SSL error skipping %s: %s", url, e)
+            except (aiohttp.ClientError, asyncio.TimeoutError, ssl.SSLError):
+                self.visited_urls.discard(url)
+                self.stats["failed"] += 1
                 return None
-
-            except (
-                aiohttp.ClientError,
-                asyncio.TimeoutError,
-                ssl.SSLError,
-            ) as e:
-                async with self._visited_lock:
-                    self.visited_urls.discard(url)
-                logging.debug("Fetch failed %s: %s", url, e)
-                return None
-
             except Exception:
-                async with self._visited_lock:
-                    self.visited_urls.discard(url)
+                self.visited_urls.discard(url)
                 logging.exception("Unexpected error fetching %s", url)
                 return None
 
@@ -466,19 +461,14 @@ class QueueCrawler:
                 url, depth = await self.queue.get()
             except asyncio.CancelledError:
                 break
-
             if depth > self.max_depth:
                 self.queue.task_done()
                 continue
-
-            links = await self.fetch(session, url)
+            links = await self.fetch(session, url, depth)
             self.queue.task_done()
-
             if links is not None and depth < self.max_depth:
                 for link in links:
                     self.safe_enqueue(link, depth + 1)
-
-            await asyncio.sleep(SYS_RANDOM.uniform(self.min_sleep, self.max_sleep))
 
     async def refresh_crux_sites(self, session: aiohttp.ClientSession):
         await asyncio.sleep(10)
@@ -490,19 +480,13 @@ class QueueCrawler:
                         self.root_urls.add(site)
                         self.safe_enqueue(site, 0)
                 logging.info("CRUX refresh complete")
-            except (
-                aiohttp.ClientError,
-                asyncio.TimeoutError,
-                ssl.SSLError,
-            ) as e:
-                logging.error("CRUX refresh failed: %s", e)
-
+            except (aiohttp.ClientError, asyncio.TimeoutError, ssl.SSLError):
+                pass
             except Exception:
                 logging.exception("Unexpected error during CRUX refresh")
             await asyncio.sleep(self.crux_refresh_seconds)
 
     async def refresh_user_agents(self, session: aiohttp.ClientSession):
-
         await asyncio.sleep(self.ua_refresh_seconds)
         while not self.stop_event.is_set():
             agents = await fetch_user_agents(session)
@@ -524,46 +508,39 @@ class QueueCrawler:
             ttl_dns_cache=DNS_CACHE_TTL,
             keepalive_timeout=self.keepalive_timeout,
         )
-
         async with aiohttp.ClientSession(
             connector=connector,
             max_line_size=MAX_HEADER_SIZE,
             max_field_size=MAX_HEADER_SIZE,
         ) as session:
-            tasks = []
-            tasks.append(asyncio.create_task(self.refresh_crux_sites(session)))
-            tasks.append(asyncio.create_task(self.refresh_user_agents(session)))
-
+            tasks = [
+                asyncio.create_task(self.refresh_crux_sites(session)),
+                asyncio.create_task(self.refresh_user_agents(session)),
+                asyncio.create_task(self.report_stats()),
+            ]
             if timeout:
                 tasks.append(asyncio.create_task(self.stop_after_timeout(timeout)))
-
             workers = [
                 asyncio.create_task(self.crawl_worker(session))
                 for _ in range(self.concurrency)
             ]
             tasks.extend(workers)
-
             await self.stop_event.wait()
-
             for task in tasks:
                 task.cancel()
-
             await asyncio.gather(*tasks, return_exceptions=True)
             logging.info("Crawler shut down cleanly")
 
 
 async def main_async(args):
     setup_logging(args.log, args.logfile)
-
     crux_refresh_seconds = int(args.crux_refresh_days * SECONDS_PER_DAY)
     ua_refresh_seconds = int(args.ua_refresh_days * SECONDS_PER_DAY)
-
     async with aiohttp.ClientSession() as session:
         top_sites = await fetch_crux_top_sites(session)
         initial_uas = await fetch_user_agents(session)
         if initial_uas:
             await ua_pool.replace(initial_uas)
-
     crawler = QueueCrawler(
         root_urls=top_sites,
         max_depth=args.max_depth,
@@ -578,25 +555,20 @@ async def main_async(args):
         connections_per_host=args.connections_per_host,
         keepalive_timeout=args.keepalive_timeout,
     )
-
     await crawler.run_forever(timeout=args.timeout)
 
 
 def main():
     parser = argparse.ArgumentParser()
-
     parser.add_argument(
         "--log", default="info", choices=["debug", "info", "warning", "error"]
     )
     parser.add_argument("--logfile")
-
     parser.add_argument("--threads", type=int, default=DEFAULT_THREADS)
     parser.add_argument("--max_depth", type=int, default=DEFAULT_MAX_DEPTH)
-
     parser.add_argument("--min_sleep", type=float, default=DEFAULT_MIN_SLEEP)
     parser.add_argument("--max_sleep", type=float, default=DEFAULT_MAX_SLEEP)
     parser.add_argument("--domain_delay", type=float, default=DEFAULT_DOMAIN_DELAY)
-
     parser.add_argument(
         "--total_connections", type=int, default=DEFAULT_TOTAL_CONNECTIONS
     )
@@ -606,7 +578,6 @@ def main():
     parser.add_argument(
         "--keepalive_timeout", type=int, default=DEFAULT_KEEPALIVE_TIMEOUT
     )
-
     parser.add_argument(
         "--crux_refresh_days", type=float, default=DEFAULT_CRUX_REFRESH_DAYS
     )
@@ -616,18 +587,14 @@ def main():
         default=DEFAULT_UA_REFRESH_DAYS,
         help="How often to refresh the UA pool from useragents.me (days). Default: 7",
     )
-
     parser.add_argument("--max_queue_size", type=int, default=DEFAULT_MAX_QUEUE_SIZE)
-
     parser.add_argument(
         "--timeout",
         type=int,
         default=DEFAULT_RUN_TIMEOUT_SECONDS,
         help="Stop crawler after N seconds",
     )
-
     args = parser.parse_args()
-
     try:
         asyncio.run(main_async(args))
     except KeyboardInterrupt:
