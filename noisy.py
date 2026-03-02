@@ -4,17 +4,18 @@ import argparse
 import asyncio
 import csv
 import gzip
+import json
 import logging
 import random
+import re
+import ssl
 import time
 from collections import OrderedDict
 from typing import List, Optional, Tuple
 from urllib.parse import urlsplit, urljoin
 
 import aiohttp
-import ssl
 from bs4 import BeautifulSoup
-
 
 # ---- CRUX ----
 CRUX_TOP_CSV = "https://raw.githubusercontent.com/zakird/crux-top-lists/main/data/global/current.csv.gz"
@@ -22,8 +23,9 @@ DEFAULT_CRUX_COUNT = 10_000
 DEFAULT_CRUX_REFRESH_DAYS = 31  # crux list updates once a month
 
 # ---- USER AGENT POOL ----
+UA_PAGE_URL = "https://www.useragents.me"
 DEFAULT_UA_COUNT = 50
-DEFAULT_UA_REFRESH_DAYS = 7  # useragents.me updates weekly - default 7 day refresh
+DEFAULT_UA_REFRESH_DAYS = 7  # useragents.me updates weekly
 
 # ---- CRAWLER LIMITS ----
 DEFAULT_MAX_QUEUE_SIZE = 100_000
@@ -54,96 +56,19 @@ SECONDS_PER_DAY = 24 * 60 * 60
 DEFAULT_VISITED_MAX = 500_000
 
 # ---- DOMAIN CACHE ----
-
 DEFAULT_DOMAIN_CACHE_MAX = 50_000
 
 # ---- MISC ----
 SYS_RANDOM = random.SystemRandom()
 
-# Fallback UA list in case
-_UA_FALLBACK = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.3; rv:123.0) Gecko/20100101 Firefox/123.0",
-    "Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.15",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
-]
+
+def _build_ssl_context() -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0)
+    return ctx
 
 
-# Fresh UA list
-class UAPool:
-    def __init__(self, initial: List[str]):
-        self._pool: List[str] = list(initial)
-        self._lock = asyncio.Lock()
-
-    def get_random(self) -> str:
-        return SYS_RANDOM.choice(self._pool)
-
-    async def replace(self, agents: List[str]) -> None:
-        async with self._lock:
-            self._pool = list(agents)
-
-    def __len__(self) -> int:
-        return len(self._pool)
-
-
-ua_pool = UAPool(_UA_FALLBACK)
-
-UA_PAGE_URL = "https://www.useragents.me"
-
-
-async def fetch_user_agents(
-    session: aiohttp.ClientSession,
-    count: int = DEFAULT_UA_COUNT,
-) -> List[str]:
-    import json as _json
-
-    logging.info("Fetching user agents from useragents.me...")
-    try:
-        async with session.get(
-            UA_PAGE_URL,
-            timeout=aiohttp.ClientTimeout(total=15),
-            ssl=SSL_CONTEXT,
-            headers={"User-Agent": SYS_RANDOM.choice(_UA_FALLBACK)},
-        ) as resp:
-            resp.raise_for_status()
-            raw = await resp.content.read(MAX_RESPONSE_BYTES)
-            html = raw.decode(resp.charset or "utf-8", errors="replace")
-
-        soup = BeautifulSoup(html, "html.parser")
-
-        agents: List[str] = []
-        seen: set = set()
-
-        for pre in soup.find_all("pre"):
-            text = pre.get_text(strip=True)
-            if not text.startswith("["):
-                continue
-            try:
-                for entry in _json.loads(text):
-                    ua_str = entry.get("ua", "").strip()
-                    if ua_str and ua_str not in seen:
-                        seen.add(ua_str)
-                        agents.append(ua_str)
-            except (_json.JSONDecodeError, AttributeError):
-                continue
-
-        if not agents:
-            raise ValueError("No UA strings found in useragents.me page")
-
-        agents = agents[:count]
-        logging.info("Loaded %d user agents", len(agents))
-        return agents
-
-    except Exception as e:
-        logging.warning("UA fetch failed, keeping existing pool: %s", e)
-        return []
-
+SSL_CONTEXT = _build_ssl_context()
 
 try:
     import brotli as _brotli
@@ -152,9 +77,7 @@ try:
 except ImportError:
     _BR_SUPPORTED = False
 
-_ENCODING_WITH_BR = "gzip, deflate, br"
-_ENCODING_WITHOUT_BR = "gzip, deflate"
-_ACCEPT_ENCODING = _ENCODING_WITH_BR if _BR_SUPPORTED else _ENCODING_WITHOUT_BR
+_ACCEPT_ENCODING = "gzip, deflate, br" if _BR_SUPPORTED else "gzip, deflate"
 
 ACCEPT_HEADERS_POOL = [
     {
@@ -180,17 +103,88 @@ ACCEPT_HEADERS_POOL = [
     },
 ]
 
+# Fallback UA list in case
+_UA_FALLBACK = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.3; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.15",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+]
 
-def _build_ssl_context() -> ssl.SSLContext:
-    ctx = ssl.create_default_context()
-    ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0)
-    return ctx
+
+# Fresh UA list
+class UAPool:
+
+    def __init__(self, initial: List[str]):
+        self._pool: List[str] = list(initial)
+        self._lock = asyncio.Lock()
+
+    def get_random(self) -> str:
+        return SYS_RANDOM.choice(self._pool)
+
+    async def replace(self, agents: List[str]) -> None:
+        async with self._lock:
+            self._pool = list(agents)
+
+    def __len__(self) -> int:
+        return len(self._pool)
 
 
-SSL_CONTEXT = _build_ssl_context()
+ua_pool = UAPool(_UA_FALLBACK)
+
+
+async def fetch_user_agents(
+    session: aiohttp.ClientSession,
+    count: int = DEFAULT_UA_COUNT,
+) -> List[str]:
+    logging.info("Fetching user agents from useragents.me...")
+    try:
+        async with session.get(
+            UA_PAGE_URL,
+            timeout=aiohttp.ClientTimeout(total=15),
+            ssl=SSL_CONTEXT,
+            headers={"User-Agent": SYS_RANDOM.choice(_UA_FALLBACK)},
+        ) as resp:
+            resp.raise_for_status()
+            raw = await resp.content.read(MAX_RESPONSE_BYTES)
+            html = raw.decode(resp.charset or "utf-8", errors="replace")
+
+        soup = BeautifulSoup(html, "html.parser")
+        page_text = soup.get_text()
+
+        agents: List[str] = []
+        seen: set = set()
+
+        for block in re.findall(r"\[\s*\{[^\[\]]+\}\s*\]", page_text):
+            try:
+                for entry in json.loads(block):
+                    ua_str = entry.get("ua", "").strip()
+                    if ua_str and ua_str not in seen:
+                        seen.add(ua_str)
+                        agents.append(ua_str)
+            except (json.JSONDecodeError, AttributeError):
+                continue
+
+        if not agents:
+            raise ValueError("No UA strings found in useragents.me page")
+
+        agents = agents[:count]
+        logging.info("Loaded %d user agents", len(agents))
+        return agents
+
+    except Exception as e:
+        logging.warning("UA fetch failed, keeping existing pool: %s", e)
+        return []
 
 
 class LRUSet:
+
     def __init__(self, maxsize: int):
         self._data: OrderedDict = OrderedDict()
         self._maxsize = maxsize
@@ -204,7 +198,7 @@ class LRUSet:
             return
         self._data[item] = None
         if len(self._data) > self._maxsize:
-            self._data.popitem(last=False)  # evict oldest
+            self._data.popitem(last=False)
 
     def discard(self, item):
         self._data.pop(item, None)
@@ -289,7 +283,6 @@ async def fetch_crux_top_sites(
 
 def extract_links(html: str, base_url: str) -> List[str]:
     soup = BeautifulSoup(html, "html.parser")
-
     base_tag = soup.find("base", href=True)
     effective_base = base_tag["href"] if base_tag else base_url
 
@@ -302,6 +295,7 @@ def extract_links(html: str, base_url: str) -> List[str]:
 
 
 class QueueCrawler:
+
     def __init__(
         self,
         root_urls: List[str],
@@ -361,7 +355,6 @@ class QueueCrawler:
             pass
 
     def _get_domain_lock(self, domain: str) -> asyncio.Lock:
-
         if domain in self.domain_locks:
             self.domain_locks.move_to_end(domain)
         else:
@@ -415,8 +408,6 @@ class QueueCrawler:
                 logging.info("Visited: %s", url)
 
             except aiohttp.ClientSSLError as e:
-                async with self._visited_lock:
-                    pass
                 logging.debug("SSL error skipping %s: %s", url, e)
                 return None
 
@@ -459,7 +450,6 @@ class QueueCrawler:
                 logging.info("CRUX refresh complete")
             except Exception as e:
                 logging.error("CRUX refresh failed: %s", e)
-
             await asyncio.sleep(self.crux_refresh_seconds)
 
     async def refresh_user_agents(self, session: aiohttp.ClientSession):
@@ -469,7 +459,6 @@ class QueueCrawler:
             if agents:
                 await ua_pool.replace(agents)
                 logging.info("UA pool refreshed (%d agents)", len(agents))
-            await asyncio.sleep(self.ua_refresh_seconds)
             await asyncio.sleep(self.ua_refresh_seconds)
 
     async def stop_after_timeout(self, timeout: int):
@@ -492,7 +481,6 @@ class QueueCrawler:
             max_field_size=MAX_HEADER_SIZE,
         ) as session:
             tasks = []
-
             tasks.append(asyncio.create_task(self.refresh_crux_sites(session)))
             tasks.append(asyncio.create_task(self.refresh_user_agents(session)))
 
@@ -572,7 +560,6 @@ def main():
     parser.add_argument(
         "--crux_refresh_days", type=float, default=DEFAULT_CRUX_REFRESH_DAYS
     )
-
     parser.add_argument(
         "--ua_refresh_days",
         type=float,
