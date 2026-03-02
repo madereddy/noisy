@@ -4,18 +4,15 @@
 FROM cgr.dev/chainguard/python:latest-dev@sha256:90e7427f9fc2ef755002aced581c81b1257870c06a3463bbb9704fcd9387e738 AS builder
 WORKDIR /app
 
-# Upgrade pip and install virtualenv
-RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel virtualenv
+# Use stdlib venv instead of the virtualenv package — no extra install needed.
+# --no-cache-dir on both pip calls keeps the builder layer lean.
+RUN python -m venv /app/venv
 
-# Copy requirements and install into a venv inside /app
 COPY requirements.txt .
+RUN /app/venv/bin/pip install --no-cache-dir --prefer-binary -r requirements.txt
 
-# Create virtualenv inside /app/venv (writable path)
-RUN python -m virtualenv /app/venv \
-    && /app/venv/bin/pip install --prefer-binary -r requirements.txt
-
-# Copy the app and config
-COPY . .
+# Copy only the files needed at runtime — not the whole repo
+COPY noisy.py .
 
 # -------------------------
 # Final runtime stage
@@ -23,14 +20,11 @@ COPY . .
 FROM cgr.dev/chainguard/python:latest@sha256:e47c748a643dc09d98587839d62ae8b76aa2a192af6ec6506fa6a305901b7810
 WORKDIR /app
 
-# Copy the virtual environment from the builder
+# Copy venv and app file in separate statements so each has its own
+# cache layer — changing noisy.py won't invalidate the venv layer.
 COPY --from=builder /app/venv /app/venv
+COPY --from=builder /app/noisy.py /app/noisy.py
 
-# Copy app and config
-COPY --from=builder /app /app
-
-# Update PATH to use venv by default
 ENV PATH="/app/venv/bin:$PATH"
 
-# Set entrypoint
-ENTRYPOINT [ "python", "/app/noisy.py" ]
+ENTRYPOINT ["python", "/app/noisy.py"]
