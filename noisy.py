@@ -263,18 +263,26 @@ class TTLDict:
 def setup_logging(log_level_str: str, logfile: Optional[str] = None):
     level = getattr(logging, log_level_str.upper(), logging.INFO)
     root = logging.getLogger()
+
+    root.handlers.clear()
     root.setLevel(level)
 
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
-    root.addHandler(handler)
+    formatter = logging.Formatter("%(levelname)s - %(message)s")
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    root.addHandler(stream_handler)
 
     if logfile:
-        fh = logging.FileHandler(logfile)
-        fh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-        root.addHandler(fh)
+        file_handler = logging.FileHandler(logfile)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
+        root.addHandler(file_handler)
 
-    logging.getLogger("aiohttp").setLevel(logging.WARNING)
+    logging.getLogger("aiohttp").setLevel(
+        logging.DEBUG if level == logging.DEBUG else logging.ERROR
+    )
 
 
 async def fetch_crux_top_sites(
@@ -428,7 +436,7 @@ class QueueCrawler:
             except Exception as e:
                 async with self._visited_lock:
                     self.visited_urls.discard(url)
-                logging.warning("Fetch failed %s: %s", url, e)
+                logging.debug("Fetch failed %s: %s", url, e)
                 return None
 
     async def crawl_worker(self, session: aiohttp.ClientSession):
@@ -466,6 +474,7 @@ class QueueCrawler:
             await asyncio.sleep(self.crux_refresh_seconds)
 
     async def refresh_user_agents(self, session: aiohttp.ClientSession):
+
         await asyncio.sleep(self.ua_refresh_seconds)
         while not self.stop_event.is_set():
             agents = await fetch_user_agents(session)
