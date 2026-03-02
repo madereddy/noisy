@@ -41,7 +41,7 @@ DEFAULT_DOMAIN_DELAY = 5.0  # seconds per domain
 DEFAULT_TOTAL_CONNECTIONS = 200
 DEFAULT_CONNECTIONS_PER_HOST = 10
 DEFAULT_KEEPALIVE_TIMEOUT = 30
-DNS_CACHE_TTL = 300
+DNS_CACHE_TTL = 3600
 
 # ---- NETWORK ----
 REQUEST_TIMEOUT = 15
@@ -143,6 +143,7 @@ async def fetch_user_agents(
     session: aiohttp.ClientSession,
     count: int = DEFAULT_UA_COUNT,
 ) -> List[str]:
+
     logging.info("Fetching user agents from useragents.me...")
     try:
         async with session.get(
@@ -184,6 +185,7 @@ async def fetch_user_agents(
 
 
 class LRUSet:
+    """Size-capped set that evicts the oldest entry when full."""
 
     def __init__(self, maxsize: int):
         self._data: OrderedDict = OrderedDict()
@@ -208,6 +210,7 @@ class LRUSet:
 
 
 class TTLDict:
+    """Dict that lazily evicts entries older than `ttl` seconds."""
 
     def __init__(self, ttl: float, maxsize: int):
         self._data: OrderedDict = OrderedDict()
@@ -281,8 +284,7 @@ async def fetch_crux_top_sites(
     return sites
 
 
-def extract_links(html: str, base_url: str) -> List[str]:
-    soup = BeautifulSoup(html, "html.parser")
+def extract_links(soup: BeautifulSoup, base_url: str) -> List[str]:
     base_tag = soup.find("base", href=True)
     effective_base = base_tag["href"] if base_tag else base_url
 
@@ -348,7 +350,8 @@ class QueueCrawler:
         self.domain_locks: OrderedDict = OrderedDict()
         self._domain_locks_max = domain_cache_max
 
-    async def safe_enqueue(self, url: str, depth: int):
+    def safe_enqueue(self, url: str, depth: int):
+
         try:
             self.queue.put_nowait((url, depth))
         except asyncio.QueueFull:
@@ -373,13 +376,15 @@ class QueueCrawler:
                 await asyncio.sleep(self.domain_delay - delta)
             self.domain_last_access.set(domain, time.monotonic())
 
-    async def fetch(self, session: aiohttp.ClientSession, url: str) -> Optional[str]:
-        async with self.semaphore:
-            async with self._visited_lock:
-                if url in self.visited_urls:
-                    return None
-                self.visited_urls.add(url)
+    async def fetch(
+        self, session: aiohttp.ClientSession, url: str
+    ) -> Optional[Tuple[str, List[str]]]:
+        async with self._visited_lock:
+            if url in self.visited_urls:
+                return None
+            self.visited_urls.add(url)
 
+        async with self.semaphore:
             try:
                 domain = urlsplit(url).hostname
             except ValueError:
@@ -407,6 +412,10 @@ class QueueCrawler:
 
                 logging.info("Visited: %s", url)
 
+                soup = BeautifulSoup(html, "html.parser")
+                links = extract_links(soup, url)
+                return html, links
+
             except aiohttp.ClientSSLError as e:
                 logging.debug("SSL error skipping %s: %s", url, e)
                 return None
@@ -418,7 +427,6 @@ class QueueCrawler:
                 return None
 
         await asyncio.sleep(SYS_RANDOM.uniform(self.min_sleep, self.max_sleep))
-        return html
 
     async def crawl_worker(self, session: aiohttp.ClientSession):
         while not self.stop_event.is_set():
@@ -431,12 +439,13 @@ class QueueCrawler:
                 self.queue.task_done()
                 continue
 
-            html = await self.fetch(session, url)
+            result = await self.fetch(session, url)
             self.queue.task_done()
 
-            if html and depth < self.max_depth:
-                for link in extract_links(html, url):
-                    await self.safe_enqueue(link, depth + 1)
+            if result and depth < self.max_depth:
+                _, links = result
+                for link in links:
+                    self.safe_enqueue(link, depth + 1)
 
     async def refresh_crux_sites(self, session: aiohttp.ClientSession):
         await asyncio.sleep(10)
@@ -446,7 +455,7 @@ class QueueCrawler:
                 for site in sites:
                     if site not in self.root_urls:
                         self.root_urls.add(site)
-                        await self.safe_enqueue(site, 0)
+                        self.safe_enqueue(site, 0)
                 logging.info("CRUX refresh complete")
             except Exception as e:
                 logging.error("CRUX refresh failed: %s", e)
