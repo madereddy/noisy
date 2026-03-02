@@ -11,11 +11,11 @@ import re
 import ssl
 import time
 from collections import OrderedDict
-from typing import List, Optional, Tuple
+from html.parser import HTMLParser
+from typing import Iterator, List, Optional
 from urllib.parse import urlsplit, urljoin
 
 import aiohttp
-from bs4 import BeautifulSoup
 
 # ---- CRUX ----
 CRUX_TOP_CSV = "https://raw.githubusercontent.com/zakird/crux-top-lists/main/data/global/current.csv.gz"
@@ -45,7 +45,7 @@ DNS_CACHE_TTL = 3600
 
 # ---- NETWORK ----
 REQUEST_TIMEOUT = 15
-MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_RESPONSE_BYTES = 512 * 1024
 MAX_HEADER_SIZE = 32 * 1024
 
 # ---- RUNTIME ----
@@ -117,7 +117,6 @@ _UA_FALLBACK = [
     "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
 ]
 
-
 # Fresh UA list
 class UAPool:
 
@@ -143,7 +142,6 @@ async def fetch_user_agents(
     session: aiohttp.ClientSession,
     count: int = DEFAULT_UA_COUNT,
 ) -> List[str]:
-
     logging.info("Fetching user agents from useragents.me...")
     try:
         async with session.get(
@@ -154,15 +152,12 @@ async def fetch_user_agents(
         ) as resp:
             resp.raise_for_status()
             raw = await resp.content.read(MAX_RESPONSE_BYTES)
-            html = raw.decode(resp.charset or "utf-8", errors="replace")
-
-        soup = BeautifulSoup(html, "html.parser")
-        page_text = soup.get_text()
+            text = raw.decode(resp.charset or "utf-8", errors="replace")
 
         agents: List[str] = []
         seen: set = set()
 
-        for block in re.findall(r"\[\s*\{[^\[\]]+\}\s*\]", page_text):
+        for block in re.findall(r"\[\s*\{[^\[\]]+\}\s*\]", text):
             try:
                 for entry in json.loads(block):
                     ua_str = entry.get("ua", "").strip()
@@ -182,6 +177,32 @@ async def fetch_user_agents(
     except Exception as e:
         logging.warning("UA fetch failed, keeping existing pool: %s", e)
         return []
+
+
+class LinkExtractor(HTMLParser):
+
+    def __init__(self, base_url: str):
+        super().__init__()
+        self.base_url = base_url
+        self.links: List[str] = []
+
+    def handle_starttag(self, tag: str, attrs):
+        attr_dict = dict(attrs)
+        if tag == "base" and "href" in attr_dict:
+            self.base_url = attr_dict["href"]
+        elif tag == "a" and "href" in attr_dict:
+            resolved = urljoin(self.base_url, attr_dict["href"])
+            if resolved.startswith("http"):
+                self.links.append(resolved)
+
+
+def extract_links(html: str, base_url: str) -> Iterator[str]:
+    parser = LinkExtractor(base_url)
+    try:
+        parser.feed(html)
+    except Exception:
+        pass
+    return iter(parser.links)
 
 
 class LRUSet:
@@ -284,18 +305,6 @@ async def fetch_crux_top_sites(
     return sites
 
 
-def extract_links(soup: BeautifulSoup, base_url: str) -> List[str]:
-    base_tag = soup.find("base", href=True)
-    effective_base = base_tag["href"] if base_tag else base_url
-
-    links = []
-    for tag in soup.find_all("a", href=True):
-        resolved = urljoin(effective_base, tag["href"])
-        if resolved.startswith("http"):
-            links.append(resolved)
-    return links
-
-
 class QueueCrawler:
 
     def __init__(
@@ -315,9 +324,7 @@ class QueueCrawler:
         visited_max: int = DEFAULT_VISITED_MAX,
         domain_cache_max: int = DEFAULT_DOMAIN_CACHE_MAX,
     ):
-        self.queue: asyncio.Queue[Tuple[str, int]] = asyncio.Queue(
-            maxsize=max_queue_size
-        )
+        self.queue: asyncio.Queue = asyncio.Queue(maxsize=max_queue_size)
         self.root_urls = set(root_urls)
         for url in root_urls:
             try:
@@ -351,7 +358,6 @@ class QueueCrawler:
         self._domain_locks_max = domain_cache_max
 
     def safe_enqueue(self, url: str, depth: int):
-
         try:
             self.queue.put_nowait((url, depth))
         except asyncio.QueueFull:
@@ -378,7 +384,7 @@ class QueueCrawler:
 
     async def fetch(
         self, session: aiohttp.ClientSession, url: str
-    ) -> Optional[Tuple[str, List[str]]]:
+    ) -> Optional[List[str]]:
         async with self._visited_lock:
             if url in self.visited_urls:
                 return None
@@ -410,11 +416,10 @@ class QueueCrawler:
                     raw = await resp.content.read(MAX_RESPONSE_BYTES)
                     html = raw.decode(resp.charset or "utf-8", errors="replace")
 
-                logging.info("Visited: %s", url)
+                logging.debug("Visited: %s", url)
 
-                soup = BeautifulSoup(html, "html.parser")
-                links = extract_links(soup, url)
-                return html, links
+                links = list(extract_links(html, url))
+                return links
 
             except aiohttp.ClientSSLError as e:
                 logging.debug("SSL error skipping %s: %s", url, e)
@@ -425,8 +430,6 @@ class QueueCrawler:
                     self.visited_urls.discard(url)
                 logging.warning("Fetch failed %s: %s", url, e)
                 return None
-
-        await asyncio.sleep(SYS_RANDOM.uniform(self.min_sleep, self.max_sleep))
 
     async def crawl_worker(self, session: aiohttp.ClientSession):
         while not self.stop_event.is_set():
@@ -439,13 +442,14 @@ class QueueCrawler:
                 self.queue.task_done()
                 continue
 
-            result = await self.fetch(session, url)
+            links = await self.fetch(session, url)
             self.queue.task_done()
 
-            if result and depth < self.max_depth:
-                _, links = result
+            if links is not None and depth < self.max_depth:
                 for link in links:
                     self.safe_enqueue(link, depth + 1)
+
+            await asyncio.sleep(SYS_RANDOM.uniform(self.min_sleep, self.max_sleep))
 
     async def refresh_crux_sites(self, session: aiohttp.ClientSession):
         await asyncio.sleep(10)
