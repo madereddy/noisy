@@ -74,9 +74,25 @@ _UA_FALLBACK = [
     "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
 ]
 
-# Fresh UA list
-_ua_pool: List[str] = list(_UA_FALLBACK)
-_ua_pool_lock = asyncio.Lock()
+
+# Fresh UA List
+class UAPool:
+    def __init__(self, initial: List[str]):
+        self._pool: List[str] = list(initial)
+        self._lock = asyncio.Lock()
+
+    def get_random(self) -> str:
+        return SYS_RANDOM.choice(self._pool)
+
+    async def replace(self, agents: List[str]) -> None:
+        async with self._lock:
+            self._pool = list(agents)
+
+    def __len__(self) -> int:
+        return len(self._pool)
+
+
+ua_pool = UAPool(_UA_FALLBACK)
 
 
 async def fetch_user_agents(
@@ -108,12 +124,8 @@ async def fetch_user_agents(
         return []
 
 
-def get_random_ua() -> str:
-    return SYS_RANDOM.choice(_ua_pool)
-
-
 try:
-    import brotli as _brotli  # noqa: F401
+    import brotli as _brotli
 
     _BR_SUPPORTED = True
 except ImportError:
@@ -158,7 +170,6 @@ SSL_CONTEXT = _build_ssl_context()
 
 
 class LRUSet:
-    """A size-capped set that evicts the oldest entry when full."""
 
     def __init__(self, maxsize: int):
         self._data: OrderedDict = OrderedDict()
@@ -183,7 +194,6 @@ class LRUSet:
 
 
 class TTLDict:
-    """Dict that lazily evicts entries older than `ttl` seconds."""
 
     def __init__(self, ttl: float, maxsize: int):
         self._data: OrderedDict = OrderedDict()
@@ -297,7 +307,6 @@ class QueueCrawler:
                 self.queue.put_nowait((url, 0))
             except asyncio.QueueFull:
                 break
-
         self.visited_urls: LRUSet = LRUSet(maxsize=visited_max)
         self._visited_lock = asyncio.Lock()
 
@@ -364,7 +373,7 @@ class QueueCrawler:
             try:
                 await self.wait_for_domain(domain)
                 accept_headers = SYS_RANDOM.choice(ACCEPT_HEADERS_POOL)
-                headers = {"User-Agent": get_random_ua(), **accept_headers}
+                headers = {"User-Agent": ua_pool.get_random(), **accept_headers}
                 timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
 
                 async with session.get(
@@ -382,7 +391,7 @@ class QueueCrawler:
 
             except aiohttp.ClientSSLError as e:
                 async with self._visited_lock:
-                    pass  # leave in visited so we don't keep retrying
+                    pass
                 logging.debug("SSL error skipping %s: %s", url, e)
                 return None
 
@@ -429,14 +438,13 @@ class QueueCrawler:
             await asyncio.sleep(self.crux_refresh_seconds)
 
     async def refresh_user_agents(self, session: aiohttp.ClientSession):
-        await asyncio.sleep(5)
+        await asyncio.sleep(self.ua_refresh_seconds)
         while not self.stop_event.is_set():
             agents = await fetch_user_agents(session)
             if agents:
-                global _ua_pool
-                async with _ua_pool_lock:
-                    _ua_pool = agents
+                await ua_pool.replace(agents)
                 logging.info("UA pool refreshed (%d agents)", len(agents))
+            await asyncio.sleep(self.ua_refresh_seconds)
             await asyncio.sleep(self.ua_refresh_seconds)
 
     async def stop_after_timeout(self, timeout: int):
@@ -446,7 +454,6 @@ class QueueCrawler:
         self.stop_event.set()
 
     async def run_forever(self, timeout: Optional[int]):
-        """Start all crawler workers and background tasks, run until stop_event is set."""
         connector = aiohttp.TCPConnector(
             limit=self.total_connections,
             limit_per_host=self.connections_per_host,
@@ -492,8 +499,7 @@ async def main_async(args):
         top_sites = await fetch_crux_top_sites(session)
         initial_uas = await fetch_user_agents(session)
         if initial_uas:
-            global _ua_pool
-            _ua_pool = initial_uas
+            await ua_pool.replace(initial_uas)
 
     crawler = QueueCrawler(
         root_urls=top_sites,
