@@ -22,9 +22,8 @@ DEFAULT_CRUX_COUNT = 10_000
 DEFAULT_CRUX_REFRESH_DAYS = 31  # crux list updates once a month
 
 # ---- USER AGENT POOL ----
-UA_API_URL = "https://www.useragents.me/api"
 DEFAULT_UA_COUNT = 50
-DEFAULT_UA_REFRESH_DAYS = 7  # useragents.me updates frequently - default 7 day refresh
+DEFAULT_UA_REFRESH_DAYS = 7  # useragents.me updates weekly - default 7 day refresh
 
 # ---- CRAWLER LIMITS ----
 DEFAULT_MAX_QUEUE_SIZE = 100_000
@@ -55,6 +54,7 @@ SECONDS_PER_DAY = 24 * 60 * 60
 DEFAULT_VISITED_MAX = 500_000
 
 # ---- DOMAIN CACHE ----
+
 DEFAULT_DOMAIN_CACHE_MAX = 50_000
 
 # ---- MISC ----
@@ -75,7 +75,7 @@ _UA_FALLBACK = [
 ]
 
 
-# Fresh UA List
+# Fresh UA list
 class UAPool:
     def __init__(self, initial: List[str]):
         self._pool: List[str] = list(initial)
@@ -94,28 +94,49 @@ class UAPool:
 
 ua_pool = UAPool(_UA_FALLBACK)
 
+UA_PAGE_URL = "https://www.useragents.me"
+
 
 async def fetch_user_agents(
     session: aiohttp.ClientSession,
     count: int = DEFAULT_UA_COUNT,
 ) -> List[str]:
+    import json as _json
+
     logging.info("Fetching user agents from useragents.me...")
     try:
         async with session.get(
-            UA_API_URL,
+            UA_PAGE_URL,
             timeout=aiohttp.ClientTimeout(total=15),
             ssl=SSL_CONTEXT,
+            headers={"User-Agent": SYS_RANDOM.choice(_UA_FALLBACK)},
         ) as resp:
             resp.raise_for_status()
-            payload = await resp.json()
+            raw = await resp.content.read(MAX_RESPONSE_BYTES)
+            html = raw.decode(resp.charset or "utf-8", errors="replace")
 
-        agents = [entry["ua"] for entry in payload.get("data", []) if entry.get("ua")][
-            :count
-        ]
+        soup = BeautifulSoup(html, "html.parser")
+
+        agents: List[str] = []
+        seen: set = set()
+
+        for pre in soup.find_all("pre"):
+            text = pre.get_text(strip=True)
+            if not text.startswith("["):
+                continue
+            try:
+                for entry in _json.loads(text):
+                    ua_str = entry.get("ua", "").strip()
+                    if ua_str and ua_str not in seen:
+                        seen.add(ua_str)
+                        agents.append(ua_str)
+            except (_json.JSONDecodeError, AttributeError):
+                continue
 
         if not agents:
-            raise ValueError("Empty UA list returned from API")
+            raise ValueError("No UA strings found in useragents.me page")
 
+        agents = agents[:count]
         logging.info("Loaded %d user agents", len(agents))
         return agents
 
@@ -170,7 +191,6 @@ SSL_CONTEXT = _build_ssl_context()
 
 
 class LRUSet:
-
     def __init__(self, maxsize: int):
         self._data: OrderedDict = OrderedDict()
         self._maxsize = maxsize
@@ -269,6 +289,7 @@ async def fetch_crux_top_sites(
 
 def extract_links(html: str, base_url: str) -> List[str]:
     soup = BeautifulSoup(html, "html.parser")
+
     base_tag = soup.find("base", href=True)
     effective_base = base_tag["href"] if base_tag else base_url
 
@@ -307,6 +328,7 @@ class QueueCrawler:
                 self.queue.put_nowait((url, 0))
             except asyncio.QueueFull:
                 break
+
         self.visited_urls: LRUSet = LRUSet(maxsize=visited_max)
         self._visited_lock = asyncio.Lock()
 
@@ -339,6 +361,7 @@ class QueueCrawler:
             pass
 
     def _get_domain_lock(self, domain: str) -> asyncio.Lock:
+
         if domain in self.domain_locks:
             self.domain_locks.move_to_end(domain)
         else:
@@ -363,6 +386,7 @@ class QueueCrawler:
                 if url in self.visited_urls:
                     return None
                 self.visited_urls.add(url)
+
             try:
                 domain = urlsplit(url).hostname
             except ValueError:
@@ -372,6 +396,7 @@ class QueueCrawler:
 
             try:
                 await self.wait_for_domain(domain)
+
                 accept_headers = SYS_RANDOM.choice(ACCEPT_HEADERS_POOL)
                 headers = {"User-Agent": ua_pool.get_random(), **accept_headers}
                 timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
