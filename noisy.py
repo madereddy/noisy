@@ -1,4 +1,4 @@
-# noisy.py - queue-based forever crawler (human-like improvements)
+# noisy.py - queue-based forever crawler
 
 import argparse
 import asyncio
@@ -208,7 +208,6 @@ class LinkExtractor(HTMLParser):
 def extract_links(html: str, base_url: str) -> Iterator[str]:
     parser = LinkExtractor(base_url)
     try:
-        # simulate partial reading before extracting links
         time.sleep(SYS_RANDOM.uniform(0.5, 2.0))
         parser.feed(html)
     except (ValueError, RuntimeError) as e:
@@ -411,9 +410,13 @@ class QueueCrawler:
                 domain = None
             if not domain:
                 return None
+
             if url in self.visited_urls:
                 return None
+
             self.visited_urls.add(url)
+            logging.debug("Visiting URL: %s", url)
+
             try:
                 await self.wait_for_domain(domain)
                 headers = SYS_RANDOM.choice(ACCEPT_HEADERS_POOL).copy()
@@ -432,20 +435,23 @@ class QueueCrawler:
                         return None
                     raw = await resp.content.read(MAX_RESPONSE_BYTES)
                     html = raw.decode(resp.charset or "utf-8", errors="replace")
+
                 self.stats["visited"] += 1
-                # simulate reading delay based on depth
                 await asyncio.sleep(
                     SYS_RANDOM.uniform(self.min_sleep, self.max_sleep)
                     * (1 + depth * 0.3)
                     * SYS_RANDOM.uniform(0.8, 1.5)
                 )
+
                 links = list(extract_links(html, url))
-                SYS_RANDOM.shuffle(links)  # shuffle links for human-like behavior
-                # occasional backtracking to root pages
+                SYS_RANDOM.shuffle(links)
+
                 if SYS_RANDOM.random() < 0.05:
                     for root_url in self.root_urls:
                         self.safe_enqueue(root_url, 0)
+
                 return links
+
             except (aiohttp.ClientError, asyncio.TimeoutError, ssl.SSLError):
                 self.visited_urls.discard(url)
                 self.stats["failed"] += 1
@@ -471,19 +477,22 @@ class QueueCrawler:
                     self.safe_enqueue(link, depth + 1)
 
     async def refresh_crux_sites(self, session: aiohttp.ClientSession):
-        await asyncio.sleep(10)
+        first_run_done = False
         while not self.stop_event.is_set():
-            try:
-                sites = await fetch_crux_top_sites(session)
-                for site in sites:
-                    if site not in self.root_urls:
-                        self.root_urls.add(site)
-                        self.safe_enqueue(site, 0)
-                logging.info("CRUX refresh complete")
-            except (aiohttp.ClientError, asyncio.TimeoutError, ssl.SSLError):
-                pass
-            except Exception:
-                logging.exception("Unexpected error during CRUX refresh")
+            if first_run_done:
+                try:
+                    sites = await fetch_crux_top_sites(session)
+                    for site in sites:
+                        if site not in self.root_urls:
+                            self.root_urls.add(site)
+                            self.safe_enqueue(site, 0)
+                    logging.info("CRUX refresh complete")
+                except (aiohttp.ClientError, asyncio.TimeoutError, ssl.SSLError):
+                    pass
+                except Exception:
+                    logging.exception("Unexpected error during CRUX refresh")
+            else:
+                first_run_done = True
             await asyncio.sleep(self.crux_refresh_seconds)
 
     async def refresh_user_agents(self, session: aiohttp.ClientSession):
@@ -502,6 +511,14 @@ class QueueCrawler:
         self.stop_event.set()
 
     async def run_forever(self, timeout: Optional[int]):
+        logging.info(
+            "Initial Stats | visited=%d failed=%d queued=%d queue_size=%d",
+            self.stats["visited"],
+            self.stats["failed"],
+            self.stats["queued"],
+            self.queue.qsize(),
+        )
+
         connector = aiohttp.TCPConnector(
             limit=self.total_connections,
             limit_per_host=self.connections_per_host,
@@ -513,19 +530,33 @@ class QueueCrawler:
             max_line_size=MAX_HEADER_SIZE,
             max_field_size=MAX_HEADER_SIZE,
         ) as session:
-            tasks = [
-                asyncio.create_task(self.refresh_crux_sites(session)),
-                asyncio.create_task(self.refresh_user_agents(session)),
-                asyncio.create_task(self.report_stats()),
-            ]
+            tasks = []
+
+            if not self.root_urls:
+                tasks.append(asyncio.create_task(self.refresh_crux_sites(session)))
+
+            tasks.append(asyncio.create_task(self.refresh_user_agents(session)))
+            tasks.append(asyncio.create_task(self.report_stats()))
+
             if timeout:
                 tasks.append(asyncio.create_task(self.stop_after_timeout(timeout)))
+
             workers = [
                 asyncio.create_task(self.crawl_worker(session))
                 for _ in range(self.concurrency)
             ]
             tasks.extend(workers)
+
             await self.stop_event.wait()
+
+            logging.info(
+                "Final Stats | visited=%d failed=%d queued=%d queue_size=%d",
+                self.stats["visited"],
+                self.stats["failed"],
+                self.stats["queued"],
+                self.queue.qsize(),
+            )
+
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
