@@ -101,7 +101,7 @@ INFO - Fetching user agents from useragents.me...
 INFO - Loaded 50 user agents
 DEBUG - Visited: https://www.google.com
 DEBUG - Visited: https://www.wikipedia.org
-WARNING - Fetch failed https://example.com: 403, message='Forbidden'
+DEBUG - Fetch failed https://example.com: 403, message='Forbidden'
 DEBUG - Visited: https://www.reddit.com
 INFO - UA pool refreshed (50 agents)
 INFO - CRUX refresh complete
@@ -109,8 +109,8 @@ INFO - CRUX refresh complete
 
 Log levels:
 - `INFO` — background refresh events
-- `WARNING` — fetch errors (403s, timeouts, connection failures)
-- `DEBUG` — visited URLs and internal aiohttp request detail
+- `WARNING` — UA pool refresh failure
+- `DEBUG` — visited URLs, fetch errors (403s, timeouts, connection failures), and internal aiohttp request detail
 
 ---
 
