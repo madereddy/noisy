@@ -11,11 +11,11 @@ import re
 import ssl
 import time
 from collections import OrderedDict
-from typing import List, Optional, Tuple
+from html.parser import HTMLParser
+from typing import Iterator, List, Optional
 from urllib.parse import urlsplit, urljoin
 
 import aiohttp
-from bs4 import BeautifulSoup
 
 # ---- CRUX ----
 CRUX_TOP_CSV = "https://raw.githubusercontent.com/zakird/crux-top-lists/main/data/global/current.csv.gz"
@@ -41,11 +41,11 @@ DEFAULT_DOMAIN_DELAY = 5.0  # seconds per domain
 DEFAULT_TOTAL_CONNECTIONS = 200
 DEFAULT_CONNECTIONS_PER_HOST = 10
 DEFAULT_KEEPALIVE_TIMEOUT = 30
-DNS_CACHE_TTL = 300
+DNS_CACHE_TTL = 3600
 
 # ---- NETWORK ----
 REQUEST_TIMEOUT = 15
-MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_RESPONSE_BYTES = 512 * 1024
 MAX_HEADER_SIZE = 32 * 1024
 
 # ---- RUNTIME ----
@@ -153,15 +153,12 @@ async def fetch_user_agents(
         ) as resp:
             resp.raise_for_status()
             raw = await resp.content.read(MAX_RESPONSE_BYTES)
-            html = raw.decode(resp.charset or "utf-8", errors="replace")
-
-        soup = BeautifulSoup(html, "html.parser")
-        page_text = soup.get_text()
+            text = raw.decode(resp.charset or "utf-8", errors="replace")
 
         agents: List[str] = []
         seen: set = set()
 
-        for block in re.findall(r"\[\s*\{[^\[\]]+\}\s*\]", page_text):
+        for block in re.findall(r"\[\s*\{[^\[\]]+\}\s*\]", text):
             try:
                 for entry in json.loads(block):
                     ua_str = entry.get("ua", "").strip()
@@ -178,12 +175,49 @@ async def fetch_user_agents(
         logging.info("Loaded %d user agents", len(agents))
         return agents
 
-    except Exception as e:
+    except (
+        aiohttp.ClientError,
+        asyncio.TimeoutError,
+        ssl.SSLError,
+    ) as e:
         logging.warning("UA fetch failed, keeping existing pool: %s", e)
         return []
 
+    except Exception:
+        logging.exception("Unexpected failure while fetching user agents")
+        return []
+
+
+class LinkExtractor(HTMLParser):
+
+    def __init__(self, base_url: str):
+        super().__init__()
+        self.base_url = base_url
+        self.links: List[str] = []
+
+    def handle_starttag(self, tag: str, attrs):
+        attr_dict = dict(attrs)
+        if tag == "base" and "href" in attr_dict:
+            self.base_url = attr_dict["href"]
+        elif tag == "a" and "href" in attr_dict:
+            resolved = urljoin(self.base_url, attr_dict["href"])
+            if resolved.startswith("http"):
+                self.links.append(resolved)
+
+
+def extract_links(html: str, base_url: str) -> Iterator[str]:
+    parser = LinkExtractor(base_url)
+    try:
+        parser.feed(html)
+    except (ValueError, RuntimeError) as e:
+        logging.debug("HTML parsing issue at %s: %s", base_url, e)
+    except Exception:
+        logging.exception("Unexpected parser failure at %s", base_url)
+    return iter(parser.links)
+
 
 class LRUSet:
+    """Size-capped set that evicts the oldest entry when full."""
 
     def __init__(self, maxsize: int):
         self._data: OrderedDict = OrderedDict()
@@ -208,6 +242,7 @@ class LRUSet:
 
 
 class TTLDict:
+    """Dict that lazily evicts entries older than `ttl` seconds."""
 
     def __init__(self, ttl: float, maxsize: int):
         self._data: OrderedDict = OrderedDict()
@@ -239,18 +274,26 @@ class TTLDict:
 def setup_logging(log_level_str: str, logfile: Optional[str] = None):
     level = getattr(logging, log_level_str.upper(), logging.INFO)
     root = logging.getLogger()
+
+    root.handlers.clear()
     root.setLevel(level)
 
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
-    root.addHandler(handler)
+    formatter = logging.Formatter("%(levelname)s - %(message)s")
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    root.addHandler(stream_handler)
 
     if logfile:
-        fh = logging.FileHandler(logfile)
-        fh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-        root.addHandler(fh)
+        file_handler = logging.FileHandler(logfile)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
+        root.addHandler(file_handler)
 
-    logging.getLogger("aiohttp").setLevel(logging.WARNING)
+    logging.getLogger("aiohttp").setLevel(
+        logging.DEBUG if level == logging.DEBUG else logging.ERROR
+    )
 
 
 async def fetch_crux_top_sites(
@@ -281,19 +324,6 @@ async def fetch_crux_top_sites(
     return sites
 
 
-def extract_links(html: str, base_url: str) -> List[str]:
-    soup = BeautifulSoup(html, "html.parser")
-    base_tag = soup.find("base", href=True)
-    effective_base = base_tag["href"] if base_tag else base_url
-
-    links = []
-    for tag in soup.find_all("a", href=True):
-        resolved = urljoin(effective_base, tag["href"])
-        if resolved.startswith("http"):
-            links.append(resolved)
-    return links
-
-
 class QueueCrawler:
 
     def __init__(
@@ -313,9 +343,7 @@ class QueueCrawler:
         visited_max: int = DEFAULT_VISITED_MAX,
         domain_cache_max: int = DEFAULT_DOMAIN_CACHE_MAX,
     ):
-        self.queue: asyncio.Queue[Tuple[str, int]] = asyncio.Queue(
-            maxsize=max_queue_size
-        )
+        self.queue: asyncio.Queue = asyncio.Queue(maxsize=max_queue_size)
         self.root_urls = set(root_urls)
         for url in root_urls:
             try:
@@ -348,7 +376,7 @@ class QueueCrawler:
         self.domain_locks: OrderedDict = OrderedDict()
         self._domain_locks_max = domain_cache_max
 
-    async def safe_enqueue(self, url: str, depth: int):
+    def safe_enqueue(self, url: str, depth: int):
         try:
             self.queue.put_nowait((url, depth))
         except asyncio.QueueFull:
@@ -373,13 +401,15 @@ class QueueCrawler:
                 await asyncio.sleep(self.domain_delay - delta)
             self.domain_last_access.set(domain, time.monotonic())
 
-    async def fetch(self, session: aiohttp.ClientSession, url: str) -> Optional[str]:
-        async with self.semaphore:
-            async with self._visited_lock:
-                if url in self.visited_urls:
-                    return None
-                self.visited_urls.add(url)
+    async def fetch(
+        self, session: aiohttp.ClientSession, url: str
+    ) -> Optional[List[str]]:
+        async with self._visited_lock:
+            if url in self.visited_urls:
+                return None
+            self.visited_urls.add(url)
 
+        async with self.semaphore:
             try:
                 domain = urlsplit(url).hostname
             except ValueError:
@@ -405,20 +435,30 @@ class QueueCrawler:
                     raw = await resp.content.read(MAX_RESPONSE_BYTES)
                     html = raw.decode(resp.charset or "utf-8", errors="replace")
 
-                logging.info("Visited: %s", url)
+                logging.debug("Visited: %s", url)
+
+                links = list(extract_links(html, url))
+                return links
 
             except aiohttp.ClientSSLError as e:
                 logging.debug("SSL error skipping %s: %s", url, e)
                 return None
 
-            except Exception as e:
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                ssl.SSLError,
+            ) as e:
                 async with self._visited_lock:
                     self.visited_urls.discard(url)
-                logging.warning("Fetch failed %s: %s", url, e)
+                logging.debug("Fetch failed %s: %s", url, e)
                 return None
 
-        await asyncio.sleep(SYS_RANDOM.uniform(self.min_sleep, self.max_sleep))
-        return html
+            except Exception:
+                async with self._visited_lock:
+                    self.visited_urls.discard(url)
+                logging.exception("Unexpected error fetching %s", url)
+                return None
 
     async def crawl_worker(self, session: aiohttp.ClientSession):
         while not self.stop_event.is_set():
@@ -431,12 +471,14 @@ class QueueCrawler:
                 self.queue.task_done()
                 continue
 
-            html = await self.fetch(session, url)
+            links = await self.fetch(session, url)
             self.queue.task_done()
 
-            if html and depth < self.max_depth:
-                for link in extract_links(html, url):
-                    await self.safe_enqueue(link, depth + 1)
+            if links is not None and depth < self.max_depth:
+                for link in links:
+                    self.safe_enqueue(link, depth + 1)
+
+            await asyncio.sleep(SYS_RANDOM.uniform(self.min_sleep, self.max_sleep))
 
     async def refresh_crux_sites(self, session: aiohttp.ClientSession):
         await asyncio.sleep(10)
@@ -446,13 +488,21 @@ class QueueCrawler:
                 for site in sites:
                     if site not in self.root_urls:
                         self.root_urls.add(site)
-                        await self.safe_enqueue(site, 0)
+                        self.safe_enqueue(site, 0)
                 logging.info("CRUX refresh complete")
-            except Exception as e:
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                ssl.SSLError,
+            ) as e:
                 logging.error("CRUX refresh failed: %s", e)
+
+            except Exception:
+                logging.exception("Unexpected error during CRUX refresh")
             await asyncio.sleep(self.crux_refresh_seconds)
 
     async def refresh_user_agents(self, session: aiohttp.ClientSession):
+
         await asyncio.sleep(self.ua_refresh_seconds)
         while not self.stop_event.is_set():
             agents = await fetch_user_agents(session)
