@@ -18,20 +18,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@aa33708b10e362ff993539393ff100fa93ed6a27
+        uses: docker/setup-buildx-action@aa33708b10e362ff993539393ff100fa93ed6a27 # v3.5.0
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push (master)
         if: github.ref == 'refs/heads/master'
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           push: true
           platforms: linux/amd64,linux/arm64
@@ -45,7 +45,7 @@ jobs:
 
       - name: Build and push (test)
         if: github.ref == 'refs/heads/test'
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           push: true
           platforms: linux/amd64,linux/arm64
@@ -59,7 +59,7 @@ jobs:
 
       - name: Build and push (dev)
         if: github.ref == 'refs/heads/dev'
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           push: true
           platforms: linux/amd64,linux/arm64
@@ -73,7 +73,7 @@ jobs:
 
       - name: Upload test reports
         if: always()
-        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
           name: test-reports
           path: test-reports
@@ -98,17 +98,25 @@ jobs:
             -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}" \
             https://hub.docker.com/v2/users/login/ | jq -r .token)
 
-          # Delete all untagged (digest-only) images
+          # Delete all untagged images via the manifests API
+          # Fetch all digests that have no tags associated
           DIGESTS=$(curl -s \
             -H "Authorization: JWT ${TOKEN}" \
             "https://hub.docker.com/v2/repositories/madereddy/noisy/tags/?page_size=100" \
-            | jq -r '.results[] | select(.name | startswith("sha256:")) | .name')
+            | jq -r '.results[] | select(.images[].digest != null) | .images[].digest' | sort -u)
+
+          ALL_TAGGED_DIGESTS=$(curl -s \
+            -H "Authorization: JWT ${TOKEN}" \
+            "https://hub.docker.com/v2/repositories/madereddy/noisy/tags/?page_size=100" \
+            | jq -r '.results[] | select(.name | startswith("sha256:") | not) | .images[].digest' | sort -u)
 
           for DIGEST in $DIGESTS; do
-            echo "Deleting untagged digest: $DIGEST"
-            curl -s -X DELETE \
-              -H "Authorization: JWT ${TOKEN}" \
-              "https://hub.docker.com/v2/repositories/madereddy/noisy/tags/${DIGEST}/"
+            if ! echo "$ALL_TAGGED_DIGESTS" | grep -qx "$DIGEST"; then
+              echo "Deleting untagged digest: $DIGEST"
+              curl -s -X DELETE \
+                -H "Authorization: JWT ${TOKEN}" \
+                "https://hub.docker.com/v2/repositories/madereddy/noisy/manifests/${DIGEST}"
+            fi
           done
 
           # Keep latest, test, dev always — keep 10 most recent sha-tagged builds
