@@ -62,6 +62,9 @@ DEFAULT_DOMAIN_CACHE_MAX = 50_000
 # ---- FAILED URL CACHE ----
 DEFAULT_FAILED_CACHE_MAX = 10_000
 
+# ---- LINK SAMPLING ----
+DEFAULT_MAX_LINKS_PER_PAGE = 50
+
 # ---- MISC ----
 _RANDOM = random.Random()
 
@@ -76,7 +79,6 @@ SSL_CONTEXT = _build_ssl_context()
 
 try:
     import brotli as _brotli
-
     _BR_SUPPORTED = True
 except ImportError:
     _BR_SUPPORTED = False
@@ -203,7 +205,8 @@ class LinkExtractor(HTMLParser):
                 self.links.append(resolved)
 
 
-def extract_links(html: str, base_url: str) -> Iterator[str]:
+def extract_links(html: str, base_url: str) -> List[str]:
+
     parser = LinkExtractor(base_url)
     try:
         parser.feed(html)
@@ -211,7 +214,7 @@ def extract_links(html: str, base_url: str) -> Iterator[str]:
         logging.debug("HTML parsing issue at %s: %s", base_url, e)
     except Exception:
         logging.exception("Unexpected parser failure at %s", base_url)
-    return iter(parser.links)
+    return parser.links
 
 
 class LRUSet:
@@ -356,6 +359,7 @@ class QueueCrawler:
         visited_max: int = DEFAULT_VISITED_MAX,
         domain_cache_max: int = DEFAULT_DOMAIN_CACHE_MAX,
         failed_cache_max: int = DEFAULT_FAILED_CACHE_MAX,
+        max_links_per_page: int = DEFAULT_MAX_LINKS_PER_PAGE,
     ):
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=max_queue_size)
         self.root_urls = set(root_urls)
@@ -378,12 +382,14 @@ class QueueCrawler:
         self.total_connections = total_connections
         self.connections_per_host = connections_per_host
         self.keepalive_timeout = keepalive_timeout
+        self.max_links_per_page = max_links_per_page
         self._seed_crux_on_start = seed_crux_on_start
         self.domain_last_access: TTLDict = TTLDict(
             ttl=domain_delay * 10, maxsize=domain_cache_max
         )
         self._domain_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
         self._domain_locks_hard: dict = {}
+        self._domain_lock_refcounts: dict = {}
         self.stats = {"visited": 0, "failed": 0, "queued": 0}
         self.failed_counts: BoundedDict = BoundedDict(maxsize=failed_cache_max)
         self.max_failures = 3
@@ -411,11 +417,20 @@ class QueueCrawler:
         if lock is None:
             lock = asyncio.Lock()
             self._domain_locks[domain] = lock
+
         self._domain_locks_hard[domain] = lock
+        self._domain_lock_refcounts[domain] = (
+            self._domain_lock_refcounts.get(domain, 0) + 1
+        )
         return lock
 
-    def _release_domain_lock_ref(self, domain: str):
-        self._domain_locks_hard.pop(domain, None)
+    def _release_domain_lock_ref(self, domain: str) -> None:
+        count = self._domain_lock_refcounts.get(domain, 1) - 1
+        if count <= 0:
+            self._domain_locks_hard.pop(domain, None)
+            self._domain_lock_refcounts.pop(domain, None)
+        else:
+            self._domain_lock_refcounts[domain] = count
 
     async def wait_for_domain(self, domain: str):
         lock = self._get_domain_lock(domain)
@@ -424,9 +439,7 @@ class QueueCrawler:
                 now = time.monotonic()
                 last = self.domain_last_access.get(domain, 0)
                 delta = now - last
-                wait_time = max(
-                    0, self.domain_delay * _RANDOM.uniform(0.8, 1.2) - delta
-                )
+                wait_time = max(0, self.domain_delay * _RANDOM.uniform(0.8, 1.2) - delta)
                 if wait_time > 0:
                     await asyncio.sleep(wait_time)
                 self.domain_last_access.set(domain, time.monotonic())
@@ -476,21 +489,28 @@ class QueueCrawler:
 
                     raw = await resp.content.read(MAX_RESPONSE_BYTES)
                     html = raw.decode(resp.charset or "utf-8", errors="replace")
+                    del raw
 
                 self.stats["visited"] += 1
+
+                links = extract_links(html, url)
+                del html
+
+                if links:
+                    if len(links) > self.max_links_per_page:
+                        links = _RANDOM.sample(links, self.max_links_per_page)
+                    else:
+                        _RANDOM.shuffle(links)
+
+                if _RANDOM.random() < 0.05:
+                    for root_url in self.root_urls:
+                        self.safe_enqueue(root_url, 0)
 
                 await asyncio.sleep(
                     _RANDOM.uniform(self.min_sleep, self.max_sleep)
                     * (1 + depth * 0.3)
                     * _RANDOM.uniform(0.8, 1.5)
                 )
-
-                links = list(extract_links(html, url))
-                _RANDOM.shuffle(links)
-
-                if _RANDOM.random() < 0.05:
-                    for root_url in self.root_urls:
-                        self.safe_enqueue(root_url, 0)
 
                 self.failed_counts.pop(url, None)
                 return links
@@ -654,7 +674,8 @@ async def main_async(args):
         total_connections=args.total_connections,
         connections_per_host=args.connections_per_host,
         keepalive_timeout=args.keepalive_timeout,
-        seed_crux_on_start=False,  # main_async pre-loads, defer first refresh
+        max_links_per_page=args.max_links_per_page,
+        seed_crux_on_start=False,
     )
     await crawler.run_forever(timeout=args.timeout)
 
@@ -689,6 +710,12 @@ def main():
         help="How often to refresh the UA pool from useragents.me (days). Default: 7",
     )
     parser.add_argument("--max_queue_size", type=int, default=DEFAULT_MAX_QUEUE_SIZE)
+    parser.add_argument(
+        "--max_links_per_page",
+        type=int,
+        default=DEFAULT_MAX_LINKS_PER_PAGE,
+        help="Max links to sample and enqueue per page. Default: 50",
+    )
     parser.add_argument(
         "--timeout",
         type=int,
