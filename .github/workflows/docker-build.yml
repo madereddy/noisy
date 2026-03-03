@@ -35,7 +35,9 @@ jobs:
         with:
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: madereddy/noisy:latest
+          tags: |
+            madereddy/noisy:latest
+            madereddy/noisy:${{ github.sha }}
 
       - name: Test image (master)
         if: github.ref == 'refs/heads/master'
@@ -47,7 +49,9 @@ jobs:
         with:
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: madereddy/noisy:test
+          tags: |
+            madereddy/noisy:test
+            madereddy/noisy:${{ github.sha }}-test
 
       - name: Test image (test)
         if: github.ref == 'refs/heads/test'
@@ -59,7 +63,9 @@ jobs:
         with:
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: madereddy/noisy:dev
+          tags: |
+            madereddy/noisy:dev
+            madereddy/noisy:${{ github.sha }}-dev
 
       - name: Test image (dev)
         if: github.ref == 'refs/heads/dev'
@@ -77,11 +83,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     if: |
-      always() &&
-      (github.event_name == 'push' && needs.build.result == 'success') ||
-      github.event_name == 'schedule'
+      always() && (
+        (github.event_name == 'push' && needs.build.result == 'success') ||
+        github.event_name == 'schedule'
+      )
     steps:
-      - name: Prune old tags from Docker Hub
+      - name: Prune old and untagged images from Docker Hub
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -91,7 +98,20 @@ jobs:
             -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}" \
             https://hub.docker.com/v2/users/login/ | jq -r .token)
 
-          # Keep latest, test, and dev always — keep 10 most recent versioned tags
+          # Delete all untagged (digest-only) images
+          DIGESTS=$(curl -s \
+            -H "Authorization: JWT ${TOKEN}" \
+            "https://hub.docker.com/v2/repositories/madereddy/noisy/tags/?page_size=100" \
+            | jq -r '.results[] | select(.name | startswith("sha256:")) | .name')
+
+          for DIGEST in $DIGESTS; do
+            echo "Deleting untagged digest: $DIGEST"
+            curl -s -X DELETE \
+              -H "Authorization: JWT ${TOKEN}" \
+              "https://hub.docker.com/v2/repositories/madereddy/noisy/tags/${DIGEST}/"
+          done
+
+          # Keep latest, test, dev always — keep 10 most recent sha-tagged builds
           TAGS=$(curl -s \
             -H "Authorization: JWT ${TOKEN}" \
             "https://hub.docker.com/v2/repositories/madereddy/noisy/tags/?page_size=100&ordering=last_updated" \
@@ -99,12 +119,12 @@ jobs:
             | tail -n +11)
 
           if [ -z "$TAGS" ]; then
-            echo "No tags to prune."
+            echo "No versioned tags to prune."
             exit 0
           fi
 
           for TAG in $TAGS; do
-            echo "Deleting tag: $TAG"
+            echo "Deleting old tag: $TAG"
             curl -s -X DELETE \
               -H "Authorization: JWT ${TOKEN}" \
               "https://hub.docker.com/v2/repositories/madereddy/noisy/tags/${TAG}/"
