@@ -585,6 +585,7 @@ class QueueCrawler:
                 logging.exception("Unexpected error during CRUX refresh")
 
     async def refresh_user_agents(self, session: aiohttp.ClientSession):
+
         await asyncio.sleep(self.ua_refresh_seconds)
         while not self.stop_event.is_set():
             agents = await fetch_user_agents(session)
