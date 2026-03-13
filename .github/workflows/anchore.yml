@@ -60,9 +60,3 @@ jobs:
         uses: github/codeql-action/upload-sarif@0c0c5dc2f136b98cb0537075ccfa21f94cd9a63e # v2.24.3
         with:
           sarif_file: trivy-results.sarif
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v.4.1.0
-
-      - name: Sign container (keyless)
-        run: cosign sign --yes localbuild/testimage:latest
