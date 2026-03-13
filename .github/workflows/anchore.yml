@@ -1,48 +1,62 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-# This workflow checks out code, builds an image, performs a container image
-# vulnerability scan with Anchore's Grype tool, and integrates the results with GitHub Advanced Security
-# code scanning feature.  For more information on the Anchore scan action usage
-# and parameters, see https://github.com/anchore/scan-action. For more
-# information on Anchore's container image scanning tool Grype, see
-# https://github.com/anchore/grype
-name: Anchore Grype vulnerability scan
+name: Container Build + Security Scan
 
 on:
   push:
-    branches: [ "master" ]
+    branches: ["master"]
   pull_request:
-    # The branches below must be a subset of the branches above
-    branches: [ "master" ]
+    branches: ["master"]
   schedule:
-    - cron: '25 22 * * 5'
+    - cron: "25 22 * * 5"
 
 permissions:
   contents: read
+  security-events: write
+  actions: read
+  id-token: write
 
 jobs:
-  Anchore-Build-Scan:
-    permissions:
-      contents: read # for actions/checkout to fetch code
-      security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
-      actions: read # only required for a private repository by github/codeql-action/upload-sarif to get the Action run status
+  container-security:
     runs-on: ubuntu-latest
+
     steps:
-    - name: Check out the code
-      uses: actions/checkout@v4.3.1
-    - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag localbuild/testimage:latest
-    - name: Run the Anchore Grype scan action
-      uses: anchore/scan-action@7037fa011853d5a11690026fb85feee79f4c946c
-      id: scan
-      with:
-        image: "localbuild/testimage:latest"
-        fail-build: false
-        severity-cutoff: critical
-    - name: Upload vulnerability report
-      uses: github/codeql-action/upload-sarif@v4
-      with:
-        sarif_file: ${{ steps.scan.outputs.sarif }}
+      - name: Checkout source
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Build Docker image
+        run: docker build . --file Dockerfile --tag localbuild/testimage:latest
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@57aae528053a48a3f6235f2d9461b05fbcb7366d # v.0.23.1
+        with:
+          image: localbuild/testimage:latest
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Run Grype scan
+        id: grype
+        uses: anchore/scan-action@7037fa011853d5a11690026fb85feee79f4c946c # v7.3.2
+        with:
+          image: localbuild/testimage:latest
+          severity-cutoff: high
+          fail-build: false
+
+      - name: Upload Grype SARIF
+        uses: github/codeql-action/upload-sarif@0c0c5dc2f136b98cb0537075ccfa21f94cd9a63e # v2.24.3
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+
+      - name: Run Trivy scan
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v.0.35.0
+        with:
+          image-ref: localbuild/testimage:latest
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@0c0c5dc2f136b98cb0537075ccfa21f94cd9a63e # v2.24.3
+        with:
+          sarif_file: trivy-results.sarif
