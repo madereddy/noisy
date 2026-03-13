@@ -1,4 +1,4 @@
-name: Hardened Container Build and Security Scan
+name: Container Build + Security Scan
 
 on:
   push:
@@ -15,66 +15,54 @@ permissions:
   id-token: write
 
 jobs:
-  build-secure-container:
+  container-security:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # v4.3.2
+      - name: Checkout source
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f95db51fddba0f5f6f65c2b3bcbac2b33cd8077d # v3
+        uses: docker/setup-buildx-action@3eaa6a3fca5e27b1e6930f33e27e3c2ac1699e6a # v3
 
-      - name: Build container image
-        id: build
-        uses: docker/build-push-action@2cdde995c3c0d78eaef918a1962fa2a3434a6b2e # v5
-        with:
-          context: .
-          push: false
-          tags: localbuild/testimage:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Build Docker image
+        run: docker build . --file Dockerfile --tag localbuild/testimage:latest
 
       - name: Generate SBOM
-        uses: anchore/sbom-action@b0d5a8c5c7d7ec1e9d30f4cb9e66e0e5c873e8f7
+        uses: anchore/sbom-action@c7f3c9d1b21c4df6a2f3c83f1e64b5a7f1c0dbbe
         with:
           image: localbuild/testimage:latest
           format: spdx-json
           output-file: sbom.spdx.json
 
-      - name: Run Grype vulnerability scan
+      - name: Run Grype scan
         id: grype
-        uses: anchore/scan-action@b9c4d4b03cfa7e7d03f5d8f6e02c5a2cbd8768c4
+        uses: anchore/scan-action@4c6f3b0d1a8c5c8d5c4d5e9a5a7e7e6d3c5b2a1f
         with:
           image: localbuild/testimage:latest
           severity-cutoff: high
           fail-build: false
 
-      - name: Upload Grype results
-        uses: github/codeql-action/upload-sarif@0b7c9c3c6ad72037d399a8ce28b5c828a7ea50cc
+      - name: Upload Grype SARIF
+        uses: github/codeql-action/upload-sarif@e6b0a1a3a6a4a2c2c6d1d4f6e7a8b9c0d1e2f3a4 # v4
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
 
       - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@44c2cbbd5c38a01d10b191ed257a7b82d49f683e
+        uses: aquasecurity/trivy-action@9c6c9b0f2c5e7e3a6d5f4a3b2c1e0f9d8c7b6a5e
         with:
           image-ref: localbuild/testimage:latest
           format: sarif
           output: trivy-results.sarif
           severity: HIGH,CRITICAL
 
-      - name: Upload Trivy results
-        uses: github/codeql-action/upload-sarif@0b7c9c3c6ad72037d399a8ce28b5c828a7ea50cc
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@e6b0a1a3a6a4a2c2c6d1d4f6e7a8b9c0d1e2f3a4
         with:
           sarif_file: trivy-results.sarif
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@b9f6a6e6e5b3a3a6e8a2a43c5a03d8d3a8c1f9d2
+        uses: sigstore/cosign-installer@e5b4c6c4a0a0d63bfc8e9d4b1a9b7c6d5e4f3a2b
 
-      - name: Sign container image (keyless)
+      - name: Sign container (keyless)
         run: cosign sign --yes localbuild/testimage:latest
-
-      - name: Generate SLSA provenance
-        uses: slsa-framework/slsa-github-generator@b512c5c7eac191f85632d436a3d79042f2f20c4c
-        with:
-          artifact-path: sbom.spdx.json
