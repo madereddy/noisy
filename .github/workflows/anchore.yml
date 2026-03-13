@@ -23,13 +23,13 @@ jobs:
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@3eaa6a3fca5e27b1e6930f33e27e3c2ac1699e6a # v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Build Docker image
         run: docker build . --file Dockerfile --tag localbuild/testimage:latest
 
       - name: Generate SBOM
-        uses: anchore/sbom-action@c7f3c9d1b21c4df6a2f3c83f1e64b5a7f1c0dbbe
+        uses: anchore/sbom-action@57aae528053a48a3f6235f2d9461b05fbcb7366d # v.0.23.1
         with:
           image: localbuild/testimage:latest
           format: spdx-json
@@ -37,19 +37,19 @@ jobs:
 
       - name: Run Grype scan
         id: grype
-        uses: anchore/scan-action@4c6f3b0d1a8c5c8d5c4d5e9a5a7e7e6d3c5b2a1f
+        uses: anchore/scan-action@7037fa011853d5a11690026fb85feee79f4c946c # v7.3.2
         with:
           image: localbuild/testimage:latest
           severity-cutoff: high
           fail-build: false
 
       - name: Upload Grype SARIF
-        uses: github/codeql-action/upload-sarif@e6b0a1a3a6a4a2c2c6d1d4f6e7a8b9c0d1e2f3a4 # v4
+        uses: github/codeql-action/upload-sarif@0c0c5dc2f136b98cb0537075ccfa21f94cd9a63e # v2.24.3
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
 
       - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@9c6c9b0f2c5e7e3a6d5f4a3b2c1e0f9d8c7b6a5e
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v.0.35.0
         with:
           image-ref: localbuild/testimage:latest
           format: sarif
@@ -57,12 +57,12 @@ jobs:
           severity: HIGH,CRITICAL
 
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@e6b0a1a3a6a4a2c2c6d1d4f6e7a8b9c0d1e2f3a4
+        uses: github/codeql-action/upload-sari@0c0c5dc2f136b98cb0537075ccfa21f94cd9a63e # v2.24.3
         with:
           sarif_file: trivy-results.sarif
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@e5b4c6c4a0a0d63bfc8e9d4b1a9b7c6d5e4f3a2b
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v.4.1.0
 
       - name: Sign container (keyless)
         run: cosign sign --yes localbuild/testimage:latest
