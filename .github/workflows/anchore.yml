@@ -1,48 +1,80 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-# This workflow checks out code, builds an image, performs a container image
-# vulnerability scan with Anchore's Grype tool, and integrates the results with GitHub Advanced Security
-# code scanning feature.  For more information on the Anchore scan action usage
-# and parameters, see https://github.com/anchore/scan-action. For more
-# information on Anchore's container image scanning tool Grype, see
-# https://github.com/anchore/grype
-name: Anchore Grype vulnerability scan
+name: Hardened Container Build and Security Scan
 
 on:
   push:
-    branches: [ "master" ]
+    branches: ["master"]
   pull_request:
-    # The branches below must be a subset of the branches above
-    branches: [ "master" ]
+    branches: ["master"]
   schedule:
-    - cron: '25 22 * * 5'
+    - cron: "25 22 * * 5"
 
 permissions:
   contents: read
+  security-events: write
+  actions: read
+  id-token: write
 
 jobs:
-  Anchore-Build-Scan:
-    permissions:
-      contents: read # for actions/checkout to fetch code
-      security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
-      actions: read # only required for a private repository by github/codeql-action/upload-sarif to get the Action run status
+  build-secure-container:
     runs-on: ubuntu-latest
+
     steps:
-    - name: Check out the code
-      uses: actions/checkout@v4.3.1
-    - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag localbuild/testimage:latest
-    - name: Run the Anchore Grype scan action
-      uses: anchore/scan-action@7037fa011853d5a11690026fb85feee79f4c946c
-      id: scan
-      with:
-        image: "localbuild/testimage:latest"
-        fail-build: false
-        severity-cutoff: critical
-    - name: Upload vulnerability report
-      uses: github/codeql-action/upload-sarif@v4
-      with:
-        sarif_file: ${{ steps.scan.outputs.sarif }}
+      - name: Checkout repository
+        uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # v4.3.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f95db51fddba0f5f6f65c2b3bcbac2b33cd8077d # v3
+
+      - name: Build container image
+        id: build
+        uses: docker/build-push-action@2cdde995c3c0d78eaef918a1962fa2a3434a6b2e # v5
+        with:
+          context: .
+          push: false
+          tags: localbuild/testimage:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@b0d5a8c5c7d7ec1e9d30f4cb9e66e0e5c873e8f7
+        with:
+          image: localbuild/testimage:latest
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Run Grype vulnerability scan
+        id: grype
+        uses: anchore/scan-action@b9c4d4b03cfa7e7d03f5d8f6e02c5a2cbd8768c4
+        with:
+          image: localbuild/testimage:latest
+          severity-cutoff: high
+          fail-build: false
+
+      - name: Upload Grype results
+        uses: github/codeql-action/upload-sarif@0b7c9c3c6ad72037d399a8ce28b5c828a7ea50cc
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+
+      - name: Run Trivy scan
+        uses: aquasecurity/trivy-action@44c2cbbd5c38a01d10b191ed257a7b82d49f683e
+        with:
+          image-ref: localbuild/testimage:latest
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@0b7c9c3c6ad72037d399a8ce28b5c828a7ea50cc
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@b9f6a6e6e5b3a3a6e8a2a43c5a03d8d3a8c1f9d2
+
+      - name: Sign container image (keyless)
+        run: cosign sign --yes localbuild/testimage:latest
+
+      - name: Generate SLSA provenance
+        uses: slsa-framework/slsa-github-generator@b512c5c7eac191f85632d436a3d79042f2f20c4c
+        with:
+          artifact-path: sbom.spdx.json
