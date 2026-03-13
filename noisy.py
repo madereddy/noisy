@@ -508,12 +508,21 @@ class UserCrawler:
 
                 links = extract_links(html, url)
                 del html
+                
+                logging.debug(
+                    "[user%d] %s -> extracted %d links",
+                    self.profile.user_id, url, len(links),
+                )
 
                 if links:
                     if len(links) > self.max_links_per_page:
                         links = self.rng.sample(links, self.max_links_per_page)
                     else:
                         self.rng.shuffle(links)
+                    logging.debug(
+                        "[user%d] queuing %d child links (ref=%s)",
+                        self.profile.user_id, len(links), url,
+                    )
 
                 if self.rng.random() < 0.05:
                     for root_url in self.root_urls:
@@ -576,6 +585,9 @@ class UserCrawler:
             if result is not None and depth < self.max_depth:
                 for child_url, child_ref in result:
                     self._safe_enqueue(child_url, depth + 1, child_ref)
+            elif result is not None and depth >= self.max_depth:
+	            logging.debug("[user%d] max_depth %d reached, not following links from %s",
+	                    self.profile.user_id, self.max_depth, url)
 
     async def run(self):
         workers = [asyncio.create_task(self.crawl_worker()) for _ in range(self.concurrency)]
