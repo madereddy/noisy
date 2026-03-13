@@ -426,6 +426,8 @@ class UserCrawler:
     async def close(self):
         if self._session:
             await self._session.close()
+            self._session = None
+        await self._connector.close()
 
     def _get_domain_lock(self, domain: str) -> asyncio.Lock:
         lock = self._domain_locks.get(domain)
@@ -743,6 +745,11 @@ async def main_async(args):
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+
+	# Explicitly close each crawler's session and connector
+    close_tasks = [asyncio.create_task(c.close()) for c in crawlers]
+    await asyncio.gather(*close_tasks, return_exceptions=True)
+
     logging.info("All tasks shut down cleanly.")
 
 
