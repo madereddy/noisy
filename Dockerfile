@@ -1,7 +1,7 @@
 # -------------------------
 # Builder stage
 # -------------------------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:99158e0ec712475becf51a333a02aa5c39a5116862a47344ecfc1c1bb0696cb6 AS builder
+FROM cgr.dev/chainguard/python:latest-dev@sha256:171a608fb79f2807fe9ac9ae60f045820976aa27f442e434e5c8ca72671b4bac AS builder
 WORKDIR /app
 
 RUN python -m venv /app/venv
