@@ -54,6 +54,7 @@ DNS_CACHE_TTL = 120
 # ---- NETWORK ----
 REQUEST_TIMEOUT = 15
 MAX_RESPONSE_BYTES = 512 * 1024
+MAX_CRUX_LIST_BYTES = 50 * 1024 * 1024
 MAX_HEADER_SIZE = 32 * 1024
 
 # ---- RUNTIME ----
@@ -608,7 +609,17 @@ async def fetch_crux_top_sites(
         if resp.status >= 400:
             logging.error("CRUX fetch failed with status %s", resp.status)
             return []
-        data = await resp.read()
+
+        chunks = []
+        total_read = 0
+        async for chunk in resp.content.iter_chunked(65536):
+            chunks.append(chunk)
+            total_read += len(chunk)
+            if total_read >= MAX_CRUX_LIST_BYTES:
+                logging.warning("CRUX list limit reached (%d bytes); truncating", MAX_CRUX_LIST_BYTES)
+                break
+        data = b"".join(chunks)
+
     csv_text = gzip.decompress(data).decode()
     reader = csv.DictReader(csv_text.splitlines())
     sites, seen = [], set()
