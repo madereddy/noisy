@@ -364,7 +364,6 @@ class UserCrawler:
         profile: UserProfile,
         shared_root_urls: List[str],
         shared_visited: LRUSet,
-        visited_lock: asyncio.Lock,
         max_depth: int,
         concurrency: int,
         min_sleep: float,
@@ -381,7 +380,6 @@ class UserCrawler:
         self.rng = profile.rng
         self.root_urls = set(shared_root_urls)
         self.shared_visited = shared_visited
-        self.visited_lock = visited_lock
         self.stop_event = stop_event
         self.max_depth = max_depth
         self.concurrency = concurrency
@@ -460,12 +458,11 @@ class UserCrawler:
         finally:
             self._release_domain_lock_ref(domain)
 
-    async def _try_mark_visited(self, url: str) -> bool:
-        async with self.visited_lock:
-            if url in self.shared_visited:
-                return False
-            self.shared_visited.add(url)
-            return True
+    def _try_mark_visited(self, url: str) -> bool:
+        if url in self.shared_visited:
+            return False
+        self.shared_visited.add(url)
+        return True
 
     async def fetch(
         self,
@@ -481,7 +478,7 @@ class UserCrawler:
             if not domain:
                 return None
 
-            if not await self._try_mark_visited(url):
+            if not self._try_mark_visited(url):
                 return None
 
             logging.debug("[user%d] Visiting %s (ref: %s)", self.profile.user_id, url, referrer)
@@ -689,7 +686,6 @@ async def main_async(args):
 
     stop_event = asyncio.Event()
     shared_visited: LRUSet = LRUSet(maxsize=DEFAULT_VISITED_MAX)
-    visited_lock = asyncio.Lock()
 
     num_users = args.num_users
     ua_list = ua_pool.sample(num_users)
@@ -706,7 +702,7 @@ async def main_async(args):
             profile=profile,
             shared_root_urls=user_sites[:500],
             shared_visited=shared_visited,
-            visited_lock=visited_lock,
+
             max_depth=args.max_depth,
             concurrency=args.threads,
             min_sleep=args.min_sleep,
