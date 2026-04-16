@@ -1,2 +1,4 @@
 aiohttp==3.13.5
 Brotli>=1.1.0
+fastapi>=0.110
+uvicorn[standard]>=0.29

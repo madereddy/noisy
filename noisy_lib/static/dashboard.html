@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOISY // Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a0f;
+  --surface: #12121a;
+  --surface2: #161620;
+  --border: #1e1e2e;
+  --text: #c8c8d4;
+  --text-dim: #5a5a72;
+  --accent: #00ff88;
+  --accent-dim: #00ff8822;
+  --warn: #ff6b35;
+  --fail: #ff3366;
+  --info: #3388ff;
+  --purple: #aa88ff;
+  --glow: 0 0 20px #00ff8833;
+  --scanline: repeating-linear-gradient(0deg,transparent,transparent 2px,#00ff8803 2px,#00ff8803 4px);
+}
+:root.light {
+  --bg: #f0f0f5;
+  --surface: #ffffff;
+  --surface2: #f5f5fa;
+  --border: #ddd;
+  --text: #222;
+  --text-dim: #888;
+  --accent: #00aa55;
+  --accent-dim: #00aa5522;
+  --warn: #cc5500;
+  --fail: #cc2244;
+  --info: #2266cc;
+  --purple: #7755cc;
+  --glow: 0 0 10px #00aa5533;
+  --scanline: none;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'JetBrains Mono', monospace; font-size: 13px;
+  min-height: 100vh; overflow-x: hidden;
+}
+body::after {
+  content: ''; position: fixed; inset: 0; background: var(--scanline);
+  pointer-events: none; z-index: 9999; opacity: 0.3;
+}
+/* HEADER */
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.header-left { display: flex; align-items: center; gap: 12px; }
+.logo {
+  font-size: 18px; font-weight: 700; letter-spacing: 4px;
+  color: var(--accent); text-shadow: var(--glow);
+}
+.logo::before { content: '//'; color: var(--text-dim); margin-right: 6px; font-weight: 300; }
+.badge {
+  display: flex; align-items: center; gap: 5px; padding: 3px 10px;
+  border: 1px solid var(--border); border-radius: 2px;
+  font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 2px;
+}
+.dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  animation: pulse 2s ease-in-out infinite;
+}
+.dot.off { background: var(--fail); animation: none; }
+.dot.paused { background: var(--warn); animation: blink 1s step-end infinite; }
+@keyframes pulse { 0%,100%{opacity:1;box-shadow:0 0 4px var(--accent)}50%{opacity:.4;box-shadow:none} }
+@keyframes blink { 50%{opacity:0} }
+.header-right { display: flex; align-items: center; gap: 10px; }
+.uptime { font-size: 11px; color: var(--text-dim); letter-spacing: 1px; }
+.btn {
+  padding: 4px 10px; border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-dim); font-family: inherit; font-size: 10px;
+  text-transform: uppercase; letter-spacing: 1px; cursor: pointer;
+  transition: all .15s;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.active { border-color: var(--warn); color: var(--warn); }
+.btn-group { display: flex; gap: 4px; }
+/* ALERT BANNER */
+.alert-banner {
+  display: none; padding: 8px 20px; background: #ff336622; border-bottom: 1px solid var(--fail);
+  color: var(--fail); font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  animation: alertFlash 2s ease-in-out infinite;
+}
+.alert-banner.show { display: flex; align-items: center; gap: 8px; }
+@keyframes alertFlash { 50%{background:#ff336611} }
+/* GRID */
+.grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1px; background: var(--border); margin: 16px; border: 1px solid var(--border);
+}
+.card {
+  background: var(--surface); padding: 14px; position: relative; overflow: hidden;
+  transition: background .15s; animation: fadeIn .3s ease forwards;
+}
+.card:hover { background: var(--surface2); }
+.card-label {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 2px;
+  color: var(--text-dim); margin-bottom: 4px;
+}
+.card-value { font-size: 24px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.card-value.warn { color: var(--warn); }
+.card-value.fail { color: var(--fail); }
+.card-value.info { color: var(--info); }
+.card-value.purple { color: var(--purple); }
+.card-sub { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+.err-breakdown { display: flex; gap: 4px; margin-top: 6px; }
+.err-tag {
+  font-size: 9px; padding: 1px 5px; border-radius: 2px; font-variant-numeric: tabular-nums;
+}
+.err-tag.c4 { color: var(--warn); border: 1px solid #ff6b3533; }
+.err-tag.c5 { color: var(--fail); border: 1px solid #ff336633; }
+.err-tag.cn { color: var(--purple); border: 1px solid #aa88ff33; }
+.spark { margin-top: 8px; height: 20px; display: flex; align-items: flex-end; gap: 1px; }
+.spark-bar {
+  flex: 1; background: var(--accent-dim); border-top: 1px solid var(--accent);
+  min-height: 1px; transition: height .3s;
+}
+/* FINGERPRINT */
+.fp-bar-wrap { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.fp-bar { width: 50px; height: 5px; background: var(--border); border-radius: 1px; overflow: hidden; }
+.fp-fill { height: 100%; transition: width .5s; }
+.fp-fill.good { background: var(--accent); }
+.fp-fill.mid { background: var(--warn); }
+.fp-fill.bad { background: var(--fail); }
+/* SECTIONS */
+.sections { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 0 16px 16px; }
+.section { min-width: 0; }
+.section.full { grid-column: 1 / -1; }
+.sec-head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.sec-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 2px;
+  color: var(--text-dim); white-space: nowrap;
+}
+.sec-line { flex: 1; height: 1px; background: var(--border); }
+.sec-box {
+  border: 1px solid var(--border); background: var(--surface); padding: 12px;
+  overflow: auto; max-height: 300px;
+}
+/* GRAPH */
+.graph-canvas {
+  width: 100%; height: 80px; display: flex; align-items: flex-end; gap: 1px;
+}
+.graph-bar {
+  flex: 1; background: linear-gradient(to top, var(--accent), var(--accent-dim));
+  min-height: 1px; transition: height .4s;
+}
+.graph-labels {
+  display: flex; justify-content: space-between; margin-top: 4px;
+  font-size: 9px; color: var(--text-dim);
+}
+/* DIURNAL */
+.diurnal-svg { width: 100%; height: 80px; }
+.diurnal-area { fill: var(--accent-dim); }
+.diurnal-line { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.diurnal-marker { fill: var(--fail); }
+/* TABLE */
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left; padding: 6px 10px; font-size: 9px; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--text-dim); background: var(--surface);
+  border-bottom: 1px solid var(--border); font-weight: 400; white-space: nowrap;
+}
+td {
+  padding: 5px 10px; border-bottom: 1px solid #14141e;
+  font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 12px;
+}
+tr:hover td { background: var(--surface2); }
+.uid { color: var(--accent); font-weight: 500; }
+.ua-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; color: var(--text-dim); font-size: 10px; }
+.tc4 { color: var(--warn); }
+.tc5 { color: var(--fail); }
+.tcn { color: var(--purple); }
+/* DIURNAL INLINE */
+.dbar-w { display: flex; align-items: center; gap: 4px; }
+.dbar { width: 40px; height: 4px; background: var(--border); border-radius: 1px; overflow: hidden; }
+.dfill { height: 100%; background: var(--accent); transition: width .5s; }
+.dval { font-size: 10px; color: var(--text-dim); }
+/* HEALTH BAR */
+.hbar { width: 50px; height: 4px; background: var(--border); border-radius: 1px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 4px; }
+.hfill { height: 100%; }
+/* LIVE LOG */
+.log-entry {
+  font-size: 11px; padding: 2px 0; border-bottom: 1px solid #14141e;
+  display: flex; gap: 8px;
+}
+.log-ts { color: var(--text-dim); min-width: 60px; }
+.log-status { min-width: 32px; font-weight: 500; }
+.log-status.ok { color: var(--accent); }
+.log-status.err { color: var(--fail); }
+.log-domain { color: var(--info); min-width: 120px; }
+.log-url { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
+/* ERROR LIST */
+.err-entry { font-size: 11px; padding: 3px 0; border-bottom: 1px solid #14141e; }
+.err-msg { color: var(--fail); }
+.err-url { color: var(--text-dim); font-size: 10px; }
+/* TLD */
+.tld-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 11px; }
+.tld-name { min-width: 40px; color: var(--info); }
+.tld-bar { flex: 1; height: 4px; background: var(--border); border-radius: 1px; overflow: hidden; }
+.tld-fill { height: 100%; background: var(--info); }
+.tld-count { min-width: 40px; text-align: right; color: var(--text-dim); }
+/* CONFIG PANEL */
+.config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cfg-field { display: flex; flex-direction: column; gap: 2px; }
+.cfg-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); }
+.cfg-input {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 4px 8px; font-family: inherit; font-size: 12px; width: 100%;
+}
+.cfg-input:focus { outline: none; border-color: var(--accent); }
+.cfg-btn {
+  grid-column: 1 / -1; padding: 6px; background: var(--accent-dim); border: 1px solid var(--accent);
+  color: var(--accent); font-family: inherit; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 2px; cursor: pointer;
+}
+.cfg-btn:hover { background: var(--accent); color: var(--bg); }
+/* FOOTER */
+.footer {
+  padding: 10px 20px; border-top: 1px solid var(--border);
+  display: flex; justify-content: space-between;
+  font-size: 9px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase;
+}
+.no-data { text-align: center; padding: 20px; color: var(--text-dim); font-size: 11px; letter-spacing: 2px; text-transform: uppercase; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(3px)} to{opacity:1;transform:translateY(0)} }
+@media(max-width:900px) {
+  .sections { grid-template-columns: 1fr; }
+  .grid { grid-template-columns: repeat(3, 1fr); margin: 8px; }
+  .header { flex-wrap: wrap; gap: 8px; }
+}
+@media(max-width:600px) {
+  .grid { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo">NOISY</div>
+    <div class="badge"><span class="dot" id="dot"></span><span id="statusText">connecting</span></div>
+  </div>
+  <div class="header-right">
+    <span class="uptime" id="uptime">00:00:00</span>
+    <div class="btn-group">
+      <button class="btn" id="btnPause" onclick="togglePause()">pause</button>
+      <button class="btn" id="btnTheme" onclick="toggleTheme()">light</button>
+      <button class="btn" onclick="exportMetrics()">export</button>
+    </div>
+  </div>
+</div>
+
+<div class="alert-banner" id="alertBanner">
+  <span>&#x26a0;</span> <span>high failure rate detected</span>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <div class="card-label">Visited</div>
+    <div class="card-value" id="visited">-</div>
+    <div class="spark" id="visitedSpark"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">Failed</div>
+    <div class="card-value fail" id="failed">-</div>
+    <div class="card-sub" id="failPct">0%</div>
+    <div class="err-breakdown">
+      <span class="err-tag c4">4xx <span id="c4">0</span></span>
+      <span class="err-tag c5">5xx <span id="c5">0</span></span>
+      <span class="err-tag cn">net <span id="cn">0</span></span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-label">Req/s</div>
+    <div class="card-value info" id="rps">-</div>
+    <div class="spark" id="rpsSpark"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">Queued</div>
+    <div class="card-value warn" id="queued">-</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Unique URLs</div>
+    <div class="card-value" id="uniqueUrls">-</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Domains</div>
+    <div class="card-value" id="activeDomains">-</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Bandwidth</div>
+    <div class="card-value purple" id="bw">-</div>
+    <div class="card-sub" id="bwTotal">0 MB</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Stealth Score</div>
+    <div class="card-value" id="fpScore">-</div>
+    <div class="fp-bar-wrap">
+      <div class="fp-bar"><div class="fp-fill" id="fpFill"></div></div>
+      <span class="card-sub" id="fpLabel">-</span>
+    </div>
+  </div>
+</div>
+
+<div class="sections">
+
+  <div class="section">
+    <div class="sec-head"><span class="sec-title">RPS History</span><span class="sec-line"></span></div>
+    <div class="sec-box">
+      <div class="graph-canvas" id="rpsGraph"></div>
+      <div class="graph-labels"><span>-2min</span><span>req/s</span><span>now</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><span class="sec-title">Diurnal Activity</span><span class="sec-line"></span></div>
+    <div class="sec-box">
+      <svg class="diurnal-svg" id="diurnalSvg" viewBox="0 0 240 80" preserveAspectRatio="none"></svg>
+      <div class="graph-labels"><span>0h</span><span>activity model (24h)</span><span>23h</span></div>
+    </div>
+  </div>
+
+  <div class="section full">
+    <div class="sec-head"><span class="sec-title">Virtual Users</span><span class="sec-line"></span></div>
+    <div class="sec-box" style="max-height:none">
+      <table>
+        <thead><tr>
+          <th>ID</th><th>Visited</th><th>Failed</th><th>4xx</th><th>5xx</th><th>Net</th>
+          <th>Queued</th><th>Data</th><th>Activity</th><th>User Agent</th>
+        </tr></thead>
+        <tbody id="usersBody"><tr><td colspan="10" class="no-data">waiting...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><span class="sec-title">Top Domains</span><span class="sec-line"></span></div>
+    <div class="sec-box" id="topDomains"><div class="no-data">waiting...</div></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><span class="sec-title">TLD Distribution</span><span class="sec-line"></span></div>
+    <div class="sec-box" id="tldDist"><div class="no-data">waiting...</div></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><span class="sec-title">Live Request Log</span><span class="sec-line"></span></div>
+    <div class="sec-box" id="liveLog" style="max-height:220px"><div class="no-data">waiting...</div></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><span class="sec-title">Recent Errors</span><span class="sec-line"></span></div>
+    <div class="sec-box" id="errList" style="max-height:220px"><div class="no-data">no errors</div></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><span class="sec-title">Runtime Config</span><span class="sec-line"></span></div>
+    <div class="sec-box">
+      <div class="config-grid" id="cfgGrid">
+        <div class="cfg-field"><label class="cfg-label">Min Sleep (s)</label><input class="cfg-input" id="cfgMinSleep" type="number" step="0.5"></div>
+        <div class="cfg-field"><label class="cfg-label">Max Sleep (s)</label><input class="cfg-input" id="cfgMaxSleep" type="number" step="0.5"></div>
+        <div class="cfg-field"><label class="cfg-label">Max Depth</label><input class="cfg-input" id="cfgMaxDepth" type="number" step="1"></div>
+        <div class="cfg-field"><label class="cfg-label">Domain Delay (s)</label><input class="cfg-input" id="cfgDomainDelay" type="number" step="0.5"></div>
+        <div class="cfg-field"><label class="cfg-label">Links/Page</label><input class="cfg-input" id="cfgMaxLinks" type="number" step="5"></div>
+        <div class="cfg-field" style="display:flex;justify-content:center;align-items:flex-end">
+          <span class="card-sub" id="cfgStatus"></span>
+        </div>
+        <button class="cfg-btn" onclick="applyConfig()">Apply Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><span class="sec-title">Stealth Analysis</span><span class="sec-line"></span></div>
+    <div class="sec-box" id="fpDetail"><div class="no-data">waiting...</div></div>
+  </div>
+
+</div>
+
+<div class="footer">
+  <span>noisy traffic generator</span>
+  <span id="lastUpdate">last update: -</span>
+</div>
+
+<script>
+const H = 60, rpsH = [], visH = [];
+let ws, rDelay = 1000, paused = false, cfgLoaded = false;
+
+function fmt(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(1)+'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1)+'K';
+  return String(n);
+}
+function fmtB(b) {
+  if (b >= 1e9) return (b/1e9).toFixed(1)+' GB';
+  if (b >= 1e6) return (b/1e6).toFixed(1)+' MB';
+  if (b >= 1e3) return (b/1e3).toFixed(1)+' KB';
+  return b+' B';
+}
+function fmtUp(s) {
+  const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;
+  return [h,m,sec].map(v=>String(v).padStart(2,'0')).join(':');
+}
+function spark(el, data) {
+  el.innerHTML='';
+  const p=Math.max(...data,1);
+  data.slice(-20).forEach(v=>{
+    const b=document.createElement('div');b.className='spark-bar';
+    b.style.height=Math.max(1,(v/p)*20)+'px';el.appendChild(b);
+  });
+}
+function rpsGraph(data) {
+  const c=document.getElementById('rpsGraph');c.innerHTML='';
+  const p=Math.max(...data,0.1);
+  data.forEach(v=>{
+    const b=document.createElement('div');b.className='graph-bar';
+    b.style.height=Math.max(1,(v/p)*80)+'px';c.appendChild(b);
+  });
+}
+function diurnalChart(curve, hour) {
+  const svg=document.getElementById('diurnalSvg');
+  const w=240, h=80;
+  let pts=curve.map((c,i)=>[i*(w/23), h-c.weight*h]);
+  let pathD='M'+pts.map(p=>p.join(',')).join('L');
+  let areaD=pathD+'L'+w+','+h+'L0,'+h+'Z';
+  const mx=hour*(w/23), my=h-curve[Math.min(23,Math.floor(hour))].weight*h;
+  svg.innerHTML=`<path class="diurnal-area" d="${areaD}"/><path class="diurnal-line" d="${pathD}"/><circle class="diurnal-marker" cx="${mx}" cy="${my}" r="3"/>`;
+}
+function healthColor(v) { return v>=0.7?'var(--accent)':v>=0.4?'var(--warn)':'var(--fail)'; }
+function fpColor(v) { return v>=0.6?'good':v>=0.3?'mid':'bad'; }
+
+function update(d) {
+  const a=d.aggregate;
+  document.getElementById('visited').textContent=fmt(a.visited);
+  document.getElementById('failed').textContent=fmt(a.failed);
+  document.getElementById('failPct').textContent=a.fail_pct.toFixed(1)+'%';
+  document.getElementById('c4').textContent=fmt(a.client_errors);
+  document.getElementById('c5').textContent=fmt(a.server_errors);
+  document.getElementById('cn').textContent=fmt(a.network_errors);
+  document.getElementById('rps').textContent=a.rps.toFixed(1);
+  document.getElementById('queued').textContent=fmt(a.queued);
+  document.getElementById('uniqueUrls').textContent=fmt(a.unique_urls);
+  document.getElementById('activeDomains').textContent=fmt(a.active_domains);
+  document.getElementById('uptime').textContent=fmtUp(d.uptime_seconds);
+  document.getElementById('bw').textContent=a.bandwidth_kbps.toFixed(0)+' KB/s';
+  document.getElementById('bwTotal').textContent=fmtB(a.total_bytes);
+  // Alert
+  const ab=document.getElementById('alertBanner');
+  ab.classList.toggle('show', a.alert_active);
+  // Pause state
+  const dot=document.getElementById('dot');
+  const btn=document.getElementById('btnPause');
+  if(d.paused){dot.className='dot paused';btn.textContent='resume';btn.classList.add('active');}
+  else{dot.className='dot';btn.textContent='pause';btn.classList.remove('active');}
+  paused=d.paused;
+  // Fingerprint
+  const fp=d.fingerprint;
+  document.getElementById('fpScore').textContent=(fp.overall*100).toFixed(0)+'%';
+  const fpFill=document.getElementById('fpFill');
+  fpFill.style.width=fp.overall*100+'%';
+  fpFill.className='fp-fill '+fpColor(fp.overall);
+  document.getElementById('fpLabel').textContent=fp.overall>=0.6?'natural':fp.overall>=0.3?'moderate':'uniform';
+  // Sparklines
+  rpsH.push(a.rps); if(rpsH.length>H)rpsH.shift();
+  visH.push(a.visited); if(visH.length>H)visH.shift();
+  spark(document.getElementById('rpsSpark'),rpsH);
+  spark(document.getElementById('visitedSpark'),visH);
+  rpsGraph(rpsH);
+  // Diurnal
+  if(d.diurnal_curve) diurnalChart(d.diurnal_curve, d.current_hour);
+  // Users table
+  const tb=document.getElementById('usersBody');
+  if(d.users&&d.users.length){
+    tb.innerHTML=d.users.map(u=>`<tr>
+      <td class="uid">U${u.id}</td><td>${fmt(u.visited)}</td><td>${fmt(u.failed)}</td>
+      <td class="tc4">${fmt(u.client_errors)}</td><td class="tc5">${fmt(u.server_errors)}</td>
+      <td class="tcn">${fmt(u.network_errors)}</td><td>${fmt(u.queued)}</td>
+      <td>${fmtB(u.bytes)}</td>
+      <td><div class="dbar-w"><div class="dbar"><div class="dfill" style="width:${u.diurnal_weight*100}%"></div></div><span class="dval">${u.diurnal_weight}</span></div></td>
+      <td class="ua-cell" title="${u.ua}">${u.ua}</td>
+    </tr>`).join('');
+  }
+  // Top domains
+  const td=document.getElementById('topDomains');
+  if(d.top_domains&&d.top_domains.length){
+    td.innerHTML='<table><thead><tr><th>Domain</th><th>OK</th><th>Fail</th><th>Health</th><th>Data</th></tr></thead><tbody>'
+      +d.top_domains.slice(0,15).map(dm=>`<tr>
+        <td style="color:var(--info)">${dm.domain}</td><td>${dm.ok}</td><td>${dm.fail}</td>
+        <td><span class="hbar"><span class="hfill" style="width:${dm.health*100}%;background:${healthColor(dm.health)}"></span></span>${(dm.health*100).toFixed(0)}%</td>
+        <td>${fmtB(dm.bytes)}</td>
+      </tr>`).join('')+'</tbody></table>';
+  }
+  // TLD dist
+  const tl=document.getElementById('tldDist');
+  if(d.tld_distribution&&d.tld_distribution.length){
+    const maxC=d.tld_distribution[0].count;
+    tl.innerHTML=d.tld_distribution.map(t=>`<div class="tld-row">
+      <span class="tld-name">${t.tld}</span>
+      <div class="tld-bar"><div class="tld-fill" style="width:${(t.count/maxC)*100}%"></div></div>
+      <span class="tld-count">${fmt(t.count)}</span>
+    </div>`).join('');
+  }
+  // Live log
+  const ll=document.getElementById('liveLog');
+  if(d.request_log&&d.request_log.length){
+    ll.innerHTML=d.request_log.slice(-30).reverse().map(r=>{
+      const t=new Date(r.ts*1000);
+      const sc=r.status>=200&&r.status<400?'ok':'err';
+      return `<div class="log-entry">
+        <span class="log-ts">${t.toLocaleTimeString()}</span>
+        <span class="log-status ${sc}">${r.status||'ERR'}</span>
+        <span class="log-domain">${r.domain}</span>
+        <span class="log-url">${r.url}</span>
+      </div>`;
+    }).join('');
+  }
+  // Errors
+  const el=document.getElementById('errList');
+  if(d.recent_errors&&d.recent_errors.length){
+    el.innerHTML=d.recent_errors.slice(-20).reverse().map(e=>{
+      const t=new Date(e.ts*1000);
+      return `<div class="err-entry">
+        <span class="log-ts">${t.toLocaleTimeString()}</span>
+        <span class="err-msg"> U${e.user_id} ${e.error}</span>
+        <div class="err-url">${e.url}</div>
+      </div>`;
+    }).join('');
+  } else { el.innerHTML='<div class="no-data">no errors</div>'; }
+  // Fingerprint detail
+  const fpd=document.getElementById('fpDetail');
+  fpd.innerHTML=['domain_diversity','tld_diversity','timing_variance'].map(k=>{
+    const v=fp[k];
+    return `<div class="fp-bar-wrap" style="margin:6px 0">
+      <span style="min-width:120px;font-size:11px;color:var(--text-dim)">${k.replace('_',' ')}</span>
+      <div class="fp-bar" style="width:80px"><div class="fp-fill ${fpColor(v)}" style="width:${v*100}%"></div></div>
+      <span style="font-size:11px">${(v*100).toFixed(0)}%</span>
+    </div>`;
+  }).join('');
+  // Config (load once)
+  if(!cfgLoaded&&d.users){cfgLoaded=true;loadConfig();}
+  // Timestamp
+  document.getElementById('lastUpdate').textContent='last update: '+new Date(d.timestamp).toLocaleTimeString();
+}
+
+function setStatus(on){
+  document.getElementById('dot').className='dot'+(on?'':' off');
+  document.getElementById('statusText').textContent=on?'live':'reconnecting';
+}
+function connect(){
+  const p=location.protocol==='https:'?'wss:':'ws:';
+  ws=new WebSocket(`${p}//${location.host}/ws/metrics`);
+  ws.onopen=()=>{setStatus(true);rDelay=1000;};
+  ws.onmessage=e=>{try{update(JSON.parse(e.data))}catch(x){console.error(x)}};
+  ws.onclose=()=>{setStatus(false);setTimeout(connect,rDelay);rDelay=Math.min(rDelay*1.5,10000);};
+  ws.onerror=()=>ws.close();
+}
+function togglePause(){
+  fetch('/api/'+(paused?'resume':'pause'),{method:'POST'});
+}
+function toggleTheme(){
+  const r=document.documentElement;
+  const light=r.classList.toggle('light');
+  document.getElementById('btnTheme').textContent=light?'dark':'light';
+}
+function exportMetrics(){
+  window.open('/api/export','_blank');
+}
+async function loadConfig(){
+  try{
+    const r=await fetch('/api/config');
+    const c=await r.json();
+    document.getElementById('cfgMinSleep').value=c.min_sleep;
+    document.getElementById('cfgMaxSleep').value=c.max_sleep;
+    document.getElementById('cfgMaxDepth').value=c.max_depth;
+    document.getElementById('cfgDomainDelay').value=c.domain_delay;
+    document.getElementById('cfgMaxLinks').value=c.max_links_per_page;
+  }catch(e){}
+}
+async function applyConfig(){
+  const data={
+    min_sleep:parseFloat(document.getElementById('cfgMinSleep').value),
+    max_sleep:parseFloat(document.getElementById('cfgMaxSleep').value),
+    max_depth:parseInt(document.getElementById('cfgMaxDepth').value),
+    domain_delay:parseFloat(document.getElementById('cfgDomainDelay').value),
+    max_links_per_page:parseInt(document.getElementById('cfgMaxLinks').value),
+  };
+  try{
+    await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    document.getElementById('cfgStatus').textContent='applied!';
+    setTimeout(()=>document.getElementById('cfgStatus').textContent='',2000);
+  }catch(e){document.getElementById('cfgStatus').textContent='error';}
+}
+connect();
+</script>
+</body>
+</html>
