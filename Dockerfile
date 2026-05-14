@@ -1,7 +1,7 @@
 # -------------------------
 # Builder stage
 # -------------------------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:11ea36ab984ff8c778fbabbd438fae1de5341b515bfc5f12097e34ae9c398088 AS builder
+FROM cgr.dev/chainguard/python:latest-dev@sha256:c1d5e091a4b83fe3bf5ef09cf53884573a7d094e41f83456bf9b59066286179f AS builder
 WORKDIR /app
 
 RUN python -m venv /app/venv
@@ -26,7 +26,7 @@ COPY noisy.py .
 # -------------------------
 # Final runtime stage
 # -------------------------
-FROM cgr.dev/chainguard/python:latest@sha256:04b61de7e81a66ccb07d04ae66b61d9e8b2f48e38d1807b05820c8fe4592653f
+FROM cgr.dev/chainguard/python:latest@sha256:d62bb4e8348fab86f3e1a8bd40cc21ded21ef325bed2d0eb15c44ec293c1ba70
 WORKDIR /app
 
 COPY --from=builder /app/venv /app/venv
