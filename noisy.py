@@ -82,9 +82,9 @@ def _diurnal_weight(hour: float) -> float:
     return max(0.05, min(1.0, daytime + evening_boost))
 
 
-def _activity_pause_seconds(rng: random.Random) -> float:
-    """5% chance of an AFK pause (5-30 min)."""
-    if rng.random() < 0.05:
+def _activity_pause_seconds(rng: random.Random, afk_prob: float = 0.05) -> float:
+    """Chance of an AFK pause (5-30 min)."""
+    if rng.random() < afk_prob:
         return rng.uniform(300, 1800)
     return 0.0
 
@@ -199,14 +199,30 @@ FINGERPRINT_MANAGER = FingerprintManager()
 class UserProfile:
     def __init__(self, user_id: int, ua: str, rng: random.Random):
         self.user_id = user_id
-        self.ua = ua
+        self._ua = ua
         self.rng = rng
-        self.accept_headers = rng.choice(ACCEPT_HEADERS_POOL).copy()
         self.sleep_phase_offset = rng.uniform(-1.5, 1.5)
+        # 30% chance of being an "Older User" profile
+        self.is_older_user = rng.random() < 0.3
+        self.behavior_scale = 1.75 if self.is_older_user else 1.0
+        self.afk_prob = 0.10 if self.is_older_user else 0.05
+        self._refresh_headers()
+
+    @property
+    def ua(self):
+        return self._ua
+
+    @ua.setter
+    def ua(self, value):
+        self._ua = value
+        self._refresh_headers()
+
+    def _refresh_headers(self):
+        self.base_headers = FINGERPRINT_MANAGER.get_headers(self._ua)
 
     def get_headers(self, referrer: Optional[str] = None) -> dict:
-        h = self.accept_headers.copy()
-        h["User-Agent"] = self.ua
+        h = self.base_headers.copy()
+        h["User-Agent"] = self._ua
         if referrer:
             h["Referer"] = referrer
         return h
