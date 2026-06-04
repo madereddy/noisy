@@ -106,30 +106,6 @@ except ImportError:
 
 _ACCEPT_ENCODING = "gzip, deflate, br" if _BR_SUPPORTED else "gzip, deflate"
 
-ACCEPT_HEADERS_POOL = [
-    {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": _ACCEPT_ENCODING,
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-        "Upgrade-Insecure-Requests": "1",
-    },
-    {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-GB,en;q=0.8,en-US;q=0.6",
-        "Accept-Encoding": _ACCEPT_ENCODING,
-        "Cache-Control": "max-age=0",
-        "Upgrade-Insecure-Requests": "1",
-    },
-    {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.7",
-        "Accept-Encoding": _ACCEPT_ENCODING,
-        "Upgrade-Insecure-Requests": "1",
-    },
-]
-
 _UA_FALLBACK = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
