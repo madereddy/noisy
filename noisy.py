@@ -209,7 +209,8 @@ async def fetch_user_agents(
 
         agents: List[str] = []
         seen: set = set()
-        for block in re.findall(r"\[\s*\{[^\[\]]+\}\s*\]", text):
+        # Updated regex to be less restrictive about nested brackets and use non-greedy matching
+        for block in re.findall(r"\[\s*\{.*?\}\s*\]", text, re.DOTALL):
             try:
                 for entry in json.loads(block):
                     ua_str = entry.get("ua", "").strip()
@@ -464,6 +465,57 @@ class UserCrawler:
         self.shared_visited.add(url)
         return True
 
+    async def _fetch_with_retry(self, session: aiohttp.ClientSession, url: str, headers: dict, timeout: aiohttp.ClientTimeout):
+        """Helper to fetch with exponential backoff and retry on transient errors."""
+        max_retries = 3
+        base_delay = 1.0
+
+        for attempt in range(max_retries + 1):
+            try:
+                async with session.get(
+                    url,
+                    headers=headers,
+                    timeout=timeout,
+                    ssl=SSL_CONTEXT,
+                    allow_redirects=True,
+                ) as resp:
+                    if resp.status >= 400:
+                        self.stats["failed"] += 1
+                        return None, None
+                    raw = await resp.content.read(MAX_RESPONSE_BYTES)
+                    html = raw.decode(resp.charset or "utf-8", errors="replace")
+                    return html, resp.status
+            except socket.gaierror as e:
+                # Issue #1039: DNS error suppression
+                logging.debug("[user%d] DNS error for %s: %s", self.profile.user_id, url, e)
+                return None, None
+            except aiohttp.ClientConnectorError as e:
+                # Check if it is a DNS error (gaierror) wrapped in a ClientConnectorError
+                if isinstance(e.os_error, socket.gaierror):
+                    logging.debug("[user%d] DNS error (wrapped) for %s: %s", self.profile.user_id, url, e.os_error)
+                    return None, None
+                
+                if attempt == max_retries:
+                    raise e
+                
+                delay = base_delay * (2 ** attempt) + self.rng.uniform(0, 0.5)
+                logging.debug(
+                    "[user%d] Connection error fetching %s (attempt %d/%d), retrying in %.2fs: %s",
+                    self.profile.user_id, url, attempt + 1, max_retries, delay, e
+                )
+                await asyncio.sleep(delay)
+            except (aiohttp.ClientError, asyncio.TimeoutError, ssl.SSLError) as e:
+                if attempt == max_retries:
+                    raise e
+                
+                delay = base_delay * (2 ** attempt) + self.rng.uniform(0, 0.5)
+                logging.debug(
+                    "[user%d] Transient error fetching %s (attempt %d/%d), retrying in %.2fs: %s",
+                    self.profile.user_id, url, attempt + 1, max_retries, delay, e
+                )
+                await asyncio.sleep(delay)
+        return None, None
+
     async def fetch(
         self,
         url: str,
@@ -489,19 +541,12 @@ class UserCrawler:
                 headers = self.profile.get_headers(referrer=referrer)
                 timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
 
-                async with session.get(
-                    url,
-                    headers=headers,
-                    timeout=timeout,
-                    ssl=SSL_CONTEXT,
-                    allow_redirects=True,
-                ) as resp:
-                    if resp.status >= 400:
-                        self.stats["failed"] += 1
-                        return None
-                    raw = await resp.content.read(MAX_RESPONSE_BYTES)
-                    html = raw.decode(resp.charset or "utf-8", errors="replace")
-                    del raw
+                html, status = await self._fetch_with_retry(session, url, headers, timeout)
+                if html is None:
+                    self.shared_visited.discard(url)
+                    self.stats["failed"] += 1
+                    self._record_failure(url)
+                    return None
 
                 self.stats["visited"] += 1
 
@@ -549,9 +594,9 @@ class UserCrawler:
                 self.stats["failed"] += 1
                 self._record_failure(url)
                 return None
-            except Exception:
+            except Exception as e:
                 self.shared_visited.discard(url)
-                logging.exception("[user%d] Unexpected error fetching %s", self.profile.user_id, url)
+                logging.exception("[user%d] Unexpected error fetching %s: %s", self.profile.user_id, url, e)
                 self._record_failure(url)
                 return None
 
