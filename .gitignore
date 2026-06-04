@@ -1,18 +1,32 @@
-#Folders
+# Folders
 .idea/
 .vscode/
 venv/
 .venv/
+env/
 __pycache__/
+docs/
 
-#Artifacts
+# Artifacts
 *.pyc
 *.pyo
 *.pyd
+build/
+dist/
+*.egg-info/
 
-#Logs
+# Logs
 *.log
 
-#OS
+# Tests
+.pytest_cache/
+.tox/
+.coverage
+htmlcov/
+
+# OS
 .DS_Store
 Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints
