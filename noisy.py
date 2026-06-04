@@ -143,6 +143,58 @@ _UA_FALLBACK = [
     "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
 ]
 
+class FingerprintManager:
+    def __init__(self):
+        self._chrome_accept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+        self._firefox_accept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+        self._safari_accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
+    def get_family(self, ua: str) -> str:
+        ua_lower = ua.lower()
+        if "chrome" in ua_lower or "chromium" in ua_lower:
+            return "chrome"
+        if "firefox" in ua_lower:
+            return "firefox"
+        if "safari" in ua_lower and "chrome" not in ua_lower:
+            return "safari"
+        return "chrome" # Default to chrome headers
+
+    def get_headers(self, ua: str) -> dict:
+        family = self.get_family(ua)
+        headers = {
+            "Upgrade-Insecure-Requests": "1",
+            "Connection": "keep-alive",
+            "Accept-Encoding": _ACCEPT_ENCODING,
+            "Cache-Control": "max-age=0",
+        }
+        
+        if family == "chrome":
+            headers.update({
+                "Accept": self._chrome_accept,
+                "Sec-CH-UA": '\"Not(A:Browser\";v=\"99\", \"Google Chrome\";v=\"122\", \"Chromium\";v=\"122\"',
+                "Sec-CH-UA-Mobile": "?0",
+                "Sec-CH-UA-Platform": '\"Windows\"',
+                "Sec-Fetch-Site": "cross-site",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-User": "?1",
+                "Sec-Fetch-Dest": "document",
+            })
+        elif family == "firefox":
+            headers.update({
+                "Accept": self._firefox_accept,
+                "Accept-Language": "en-US,en;q=0.5",
+            })
+        elif family == "safari":
+            headers.update({
+                "Accept": self._safari_accept,
+                "Accept-Language": "en-US,en;q=0.9",
+            })
+        return headers
+
+
+FINGERPRINT_MANAGER = FingerprintManager()
+
+
 # Per-user UA fingerprint
 class UserProfile:
     def __init__(self, user_id: int, ua: str, rng: random.Random):
