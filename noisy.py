@@ -480,6 +480,7 @@ class UserCrawler:
             keepalive_timeout=keepalive_timeout,
         )
         self._session: Optional[aiohttp.ClientSession] = None
+        self.active_loading_until = 0.0
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None:
@@ -489,6 +490,12 @@ class UserCrawler:
                 max_field_size=MAX_HEADER_SIZE,
             )
         return self._session
+
+    async def wait_for_pacer(self):
+        now = time.monotonic()
+        if now < self.active_loading_until:
+            delay = self.active_loading_until - now
+            await asyncio.sleep(delay)
 
     async def close(self):
         if self._session:
@@ -591,6 +598,7 @@ class UserCrawler:
         referrer: Optional[str],
     ) -> Optional[List[Tuple[str, Optional[str]]]]:
         async with self.semaphore:
+            await self.wait_for_pacer()
             try:
                 domain = urlsplit(url).hostname
             except ValueError:
@@ -615,6 +623,10 @@ class UserCrawler:
                     self.stats["failed"] += 1
                     self._record_failure(url)
                     return None
+
+                # Set pacer for sub-resource simulation
+                pacer_range = (3.0, 7.0) if self.profile.is_older_user else (1.2, 4.5)
+                self.active_loading_until = time.monotonic() + self.rng.uniform(*pacer_range)
 
                 self.stats["visited"] += 1
 
