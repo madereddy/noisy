@@ -600,10 +600,6 @@ class UserCrawler:
                     self._record_failure(url)
                     return None
 
-                # Set pacer for sub-resource simulation
-                pacer_range = (3.0, 7.0) if self.profile.is_older_user else (1.2, 4.5)
-                self.active_loading_until = time.monotonic() + self.rng.uniform(*pacer_range)
-
                 self.stats["visited"] += 1
 
                 links = extract_links(html, url)
