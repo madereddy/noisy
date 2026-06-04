@@ -82,9 +82,9 @@ def _diurnal_weight(hour: float) -> float:
     return max(0.05, min(1.0, daytime + evening_boost))
 
 
-def _activity_pause_seconds(rng: random.Random) -> float:
-    """5% chance of an AFK pause (5-30 min)."""
-    if rng.random() < 0.05:
+def _activity_pause_seconds(rng: random.Random, afk_prob: float = 0.05) -> float:
+    """Chance of an AFK pause (5-30 min)."""
+    if rng.random() < afk_prob:
         return rng.uniform(300, 1800)
     return 0.0
 
@@ -106,30 +106,6 @@ except ImportError:
 
 _ACCEPT_ENCODING = "gzip, deflate, br" if _BR_SUPPORTED else "gzip, deflate"
 
-ACCEPT_HEADERS_POOL = [
-    {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": _ACCEPT_ENCODING,
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-        "Upgrade-Insecure-Requests": "1",
-    },
-    {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-GB,en;q=0.8,en-US;q=0.6",
-        "Accept-Encoding": _ACCEPT_ENCODING,
-        "Cache-Control": "max-age=0",
-        "Upgrade-Insecure-Requests": "1",
-    },
-    {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.7",
-        "Accept-Encoding": _ACCEPT_ENCODING,
-        "Upgrade-Insecure-Requests": "1",
-    },
-]
-
 _UA_FALLBACK = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -143,18 +119,86 @@ _UA_FALLBACK = [
     "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
 ]
 
+class FingerprintManager:
+    def __init__(self):
+        self._chrome_accept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+        self._firefox_accept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+        self._safari_accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
+    def get_family(self, ua: str) -> str:
+        ua_lower = ua.lower()
+        if "chrome" in ua_lower or "chromium" in ua_lower:
+            return "chrome"
+        if "firefox" in ua_lower:
+            return "firefox"
+        if "safari" in ua_lower and "chrome" not in ua_lower:
+            return "safari"
+        return "chrome" # Default to chrome headers
+
+    def get_headers(self, ua: str) -> dict:
+        family = self.get_family(ua)
+        headers = {
+            "Upgrade-Insecure-Requests": "1",
+            "Connection": "keep-alive",
+            "Accept-Encoding": _ACCEPT_ENCODING,
+            "Cache-Control": "max-age=0",
+        }
+        
+        if family == "chrome":
+            headers.update({
+                "Accept": self._chrome_accept,
+                "Sec-CH-UA": '\"Not(A:Browser\";v=\"99\", \"Google Chrome\";v=\"122\", \"Chromium\";v=\"122\"',
+                "Sec-CH-UA-Mobile": "?0",
+                "Sec-CH-UA-Platform": '\"Windows\"',
+                "Sec-Fetch-Site": "cross-site",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-User": "?1",
+                "Sec-Fetch-Dest": "document",
+            })
+        elif family == "firefox":
+            headers.update({
+                "Accept": self._firefox_accept,
+                "Accept-Language": "en-US,en;q=0.5",
+            })
+        elif family == "safari":
+            headers.update({
+                "Accept": self._safari_accept,
+                "Accept-Language": "en-US,en;q=0.9",
+            })
+        return headers
+
+
+FINGERPRINT_MANAGER = FingerprintManager()
+
+
 # Per-user UA fingerprint
 class UserProfile:
     def __init__(self, user_id: int, ua: str, rng: random.Random):
         self.user_id = user_id
-        self.ua = ua
+        self._ua = ua
         self.rng = rng
-        self.accept_headers = rng.choice(ACCEPT_HEADERS_POOL).copy()
         self.sleep_phase_offset = rng.uniform(-1.5, 1.5)
+        # 30% chance of being an "Older User" profile
+        self.is_older_user = rng.random() < 0.3
+        self.behavior_scale = 1.75 if self.is_older_user else 1.0
+        self.afk_prob = 0.10 if self.is_older_user else 0.05
+        self._refresh_headers()
+
+    @property
+    def ua(self):
+        return self._ua
+
+    @ua.setter
+    def ua(self, value):
+        self._ua = value
+        self._refresh_headers()
+
+    def _refresh_headers(self):
+        self.base_headers = FINGERPRINT_MANAGER.get_headers(self._ua)
 
     def get_headers(self, referrer: Optional[str] = None) -> dict:
-        h = self.accept_headers.copy()
-        h["User-Agent"] = self.ua
+        h = self.base_headers.copy()
+        h["User-Agent"] = self._ua
         if referrer:
             h["Referer"] = referrer
         return h
@@ -412,6 +456,7 @@ class UserCrawler:
             keepalive_timeout=keepalive_timeout,
         )
         self._session: Optional[aiohttp.ClientSession] = None
+        self.active_loading_until = 0.0
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None:
@@ -421,6 +466,12 @@ class UserCrawler:
                 max_field_size=MAX_HEADER_SIZE,
             )
         return self._session
+
+    async def wait_for_pacer(self):
+        now = time.monotonic()
+        if now < self.active_loading_until:
+            delay = self.active_loading_until - now
+            await asyncio.sleep(delay)
 
     async def close(self):
         if self._session:
@@ -523,6 +574,7 @@ class UserCrawler:
         referrer: Optional[str],
     ) -> Optional[List[Tuple[str, Optional[str]]]]:
         async with self.semaphore:
+            await self.wait_for_pacer()
             try:
                 domain = urlsplit(url).hostname
             except ValueError:
@@ -572,15 +624,17 @@ class UserCrawler:
                     for root_url in self.root_urls:
                         self._safe_enqueue(root_url, 0, None)
 
-                pause = _activity_pause_seconds(self.rng)
+                pause = _activity_pause_seconds(self.rng, afk_prob=self.profile.afk_prob)
                 if pause:
                     logging.debug("[user%d] AFK pause %.0fs", self.profile.user_id, pause)
                     await asyncio.sleep(pause)
                 else:
                     weight = max(0.05, self.profile.diurnal_weight())
                     scale = 1.0 / weight
+                    # Scale by profile behavior_scale (Older User factor)
+                    base_sleep = self.rng.uniform(self.min_sleep, self.max_sleep) * self.profile.behavior_scale
                     await asyncio.sleep(
-                        self.rng.uniform(self.min_sleep, self.max_sleep)
+                        base_sleep
                         * (1 + depth * 0.3)
                         * self.rng.uniform(0.8, 1.5)
                         * scale
