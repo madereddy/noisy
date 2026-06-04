@@ -652,15 +652,17 @@ class UserCrawler:
                     for root_url in self.root_urls:
                         self._safe_enqueue(root_url, 0, None)
 
-                pause = _activity_pause_seconds(self.rng)
+                pause = _activity_pause_seconds(self.rng, afk_prob=self.profile.afk_prob)
                 if pause:
                     logging.debug("[user%d] AFK pause %.0fs", self.profile.user_id, pause)
                     await asyncio.sleep(pause)
                 else:
                     weight = max(0.05, self.profile.diurnal_weight())
                     scale = 1.0 / weight
+                    # Scale by profile behavior_scale (Older User factor)
+                    base_sleep = self.rng.uniform(self.min_sleep, self.max_sleep) * self.profile.behavior_scale
                     await asyncio.sleep(
-                        self.rng.uniform(self.min_sleep, self.max_sleep)
+                        base_sleep
                         * (1 + depth * 0.3)
                         * self.rng.uniform(0.8, 1.5)
                         * scale
