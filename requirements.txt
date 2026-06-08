@@ -1,4 +1,4 @@
-aiohttp>=3.14.0
+aiohttp>=3.14.1
 Brotli>=1.2.0
 idna>=3.18
 urllib3>=2.7.0
